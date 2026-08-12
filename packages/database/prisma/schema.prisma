@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  name      String?
+  avatar    String?
+  plan      Plan      @default(FREE)
+  credits   Int       @default(500)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  projects  Project[]
+}
+
+enum Plan {
+  FREE
+  PRO
+  TEAM
+  ENTERPRISE
+}
+
+model Project {
+  id           String          @id @default(uuid())
+  name         String
+  description  String?
+  status       ProjectStatus   @default(DRAFT)
+  platform     String[]
+  pipelineMode PipelineMode     @default(STEP_BY_STEP)
+  ownerId      String
+  owner        User            @relation(fields: [ownerId], references: [id])
+  versions     ProjectVersion[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  READY_TO_PUBLISH
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PipelineMode {
+  AUTO
+  STEP_BY_STEP
+}
+
+model ProjectVersion {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version   String
+  snapshot  Json
+  createdAt DateTime @default(now())
+}

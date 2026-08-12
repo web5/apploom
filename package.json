@@ -1,0 +1,17 @@
+{
+  "name": "ai-dev-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI 研发平台：输入一句话，AI 自动完成需求拆解→方案设计→代码生成→发布上线",
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "db:generate": "pnpm --filter @aidp/database db:generate",
+    "db:migrate": "pnpm --filter @aidp/database db:migrate",
+    "db:studio": "pnpm --filter @aidp/database db:studio"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
