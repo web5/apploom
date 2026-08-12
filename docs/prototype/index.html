@@ -1,0 +1,1471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Dev Studio - 原型稿</title>
+<style>
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f7f8fa;
+  --bg-tertiary: #f0f1f3;
+  --text-primary: #1a1a2e;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --border: #e5e7eb;
+  --border-hover: #d1d5db;
+  --blue: #3b82f6;
+  --blue-bg: #eff6ff;
+  --blue-border: #93c5fd;
+  --green: #10b981;
+  --green-bg: #ecfdf5;
+  --green-border: #6ee7b7;
+  --amber: #f59e0b;
+  --amber-bg: #fffbeb;
+  --amber-border: #fcd34d;
+  --red: #ef4444;
+  --red-bg: #fef2f2;
+  --red-border: #fca5a5;
+  --purple: #8b5cf6;
+  --purple-bg: #f5f3ff;
+  --purple-border: #c4b5fd;
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 14px; color: var(--text-primary); background: var(--bg-secondary); -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; }
+input, textarea, select { font-family: inherit; font-size: 14px; }
+
+/* ====== Pages ====== */
+.page { display: none; min-height: 100vh; }
+.page.active { display: block; }
+
+/* ====== Top Navigation ====== */
+.topbar { display: flex; align-items: center; justify-content: space-between; height: 56px; background: var(--bg-primary); border-bottom: 1px solid var(--border); padding: 0 24px; position: sticky; top: 0; z-index: 100; }
+.topbar-left { display: flex; align-items: center; gap: 28px; }
+.topbar-logo { font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.topbar-logo span.icon { width: 28px; height: 28px; background: var(--blue); color: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
+.topbar-nav { display: flex; gap: 4px; }
+.topbar-nav-item { font-size: 14px; color: var(--text-secondary); cursor: pointer; padding: 6px 14px; border-radius: var(--radius); transition: all 0.15s; }
+.topbar-nav-item:hover { background: var(--bg-secondary); }
+.topbar-nav-item.active { color: var(--blue); background: var(--blue-bg); font-weight: 500; }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.topbar-search { width: 200px; height: 34px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 12px; font-size: 13px; color: var(--text-secondary); }
+.topbar-icon-btn { width: 34px; height: 34px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-secondary); font-size: 16px; }
+.topbar-icon-btn:hover { background: var(--bg-secondary); }
+.topbar-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; cursor: pointer; }
+.upgrade-btn { background: var(--blue); color: #fff; padding: 6px 16px; border-radius: var(--radius); font-size: 13px; font-weight: 500; cursor: pointer; }
+.upgrade-btn:hover { background: #2563eb; }
+
+/* ====== Landing Page ====== */
+.landing-nav { display: flex; align-items: center; justify-content: space-between; height: 64px; padding: 0 48px; background: rgba(255,255,255,0.95); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); }
+.landing-nav-logo { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.landing-nav-logo span.icon { width: 32px; height: 32px; background: var(--blue); color: #fff; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+.landing-nav-links { display: flex; gap: 32px; }
+.landing-nav-links a { font-size: 14px; color: var(--text-secondary); }
+.landing-nav-links a:hover { color: var(--text-primary); }
+.landing-nav-actions { display: flex; gap: 12px; align-items: center; }
+.landing-hero { text-align: center; padding: 80px 24px 60px; max-width: 800px; margin: 0 auto; }
+.landing-hero h1 { font-size: 48px; font-weight: 700; line-height: 1.2; margin-bottom: 20px; background: linear-gradient(135deg, #1a1a2e, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.landing-hero p { font-size: 18px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 36px; }
+.landing-hero-cta { display: flex; gap: 16px; justify-content: center; }
+.landing-btn-primary { background: var(--blue); color: #fff; padding: 14px 32px; border-radius: var(--radius); font-size: 16px; font-weight: 500; cursor: pointer; }
+.landing-btn-primary:hover { background: #2563eb; }
+.landing-btn-secondary { background: var(--bg-primary); color: var(--text-primary); padding: 14px 32px; border-radius: var(--radius); font-size: 16px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); }
+.landing-btn-secondary:hover { border-color: var(--border-hover); }
+.landing-demo { max-width: 900px; margin: 40px auto; padding: 0 24px; }
+.landing-demo-box { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 32px; box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
+.landing-demo-input { display: flex; gap: 12px; margin-bottom: 24px; }
+.landing-demo-input input { flex: 1; height: 48px; border: 2px solid var(--border); border-radius: var(--radius); padding: 0 16px; font-size: 15px; }
+.landing-demo-input input:focus { outline: none; border-color: var(--blue); }
+.landing-demo-input button { background: var(--blue); color: #fff; padding: 0 24px; border-radius: var(--radius); font-size: 14px; font-weight: 500; }
+.landing-demo-steps { display: flex; gap: 16px; }
+.landing-demo-step { flex: 1; text-align: center; }
+.landing-demo-step-num { width: 40px; height: 40px; border-radius: 50%; background: var(--blue-bg); color: var(--blue); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; margin: 0 auto 8px; }
+.landing-demo-step h4 { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+.landing-demo-step p { font-size: 12px; color: var(--text-tertiary); }
+.landing-features { max-width: 1000px; margin: 60px auto; padding: 0 24px; }
+.landing-features h2 { text-align: center; font-size: 32px; font-weight: 700; margin-bottom: 40px; }
+.landing-features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.landing-feature-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; }
+.landing-feature-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-bottom: 16px; }
+.landing-feature-card h4 { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
+.landing-feature-card p { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+
+/* ====== Dashboard ====== */
+.dashboard-content { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.create-bar { display: flex; gap: 12px; margin-bottom: 32px; }
+.create-input-wrapper { flex: 1; display: flex; align-items: center; gap: 10px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 0 18px; height: 52px; }
+.create-input-wrapper:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+.create-input-wrapper input { flex: 1; border: none; outline: none; font-size: 14px; background: transparent; }
+.create-input-icon { color: var(--text-tertiary); font-size: 18px; }
+.create-upload-btn { background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-secondary); padding: 0 20px; height: 52px; border-radius: var(--radius-lg); font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.create-upload-btn:hover { border-color: var(--border-hover); }
+.create-go-btn { background: var(--blue); color: #fff; padding: 0 28px; height: 52px; border-radius: var(--radius-lg); font-size: 14px; font-weight: 500; }
+.create-go-btn:hover { background: #2563eb; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.section-title { font-size: 18px; font-weight: 600; }
+.section-tabs { display: flex; gap: 4px; }
+.section-tab { font-size: 13px; padding: 6px 14px; border-radius: var(--radius); cursor: pointer; color: var(--text-secondary); }
+.section-tab.active { background: var(--bg-primary); color: var(--text-primary); font-weight: 500; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.section-tab:hover:not(.active) { background: var(--bg-tertiary); }
+.project-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 32px; }
+.project-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; cursor: pointer; transition: all 0.15s; }
+.project-card:hover { border-color: var(--border-hover); box-shadow: 0 2px 12px rgba(0,0,0,0.06); transform: translateY(-1px); }
+.project-card-icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; margin-bottom: 14px; }
+.project-card-name { font-size: 15px; font-weight: 500; margin-bottom: 6px; }
+.project-card-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px; height: 38px; overflow: hidden; }
+.project-card-meta { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-tertiary); }
+.badge { font-size: 11px; padding: 3px 10px; border-radius: 12px; font-weight: 500; }
+.badge-progress { background: var(--blue-bg); color: var(--blue); }
+.badge-done { background: var(--green-bg); color: var(--green); }
+.badge-draft { background: var(--bg-tertiary); color: var(--text-tertiary); }
+.badge-waiting { background: var(--amber-bg); color: var(--amber); }
+.activity-panel { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 4px 20px; }
+.activity-item { display: flex; align-items: flex-start; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.activity-item:last-child { border-bottom: none; }
+.activity-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.activity-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; flex: 1; }
+.activity-text strong { color: var(--text-primary); font-weight: 500; }
+.activity-time { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
+
+/* ====== Project Workspace ====== */
+.workspace { display: flex; height: calc(100vh - 56px); overflow: hidden; }
+.ws-panel-left { width: 320px; background: var(--bg-primary); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.ws-panel-mid { flex: 1; background: var(--bg-secondary); display: flex; flex-direction: column; overflow: hidden; }
+.ws-panel-right { width: 360px; background: var(--bg-primary); border-left: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.ws-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.ws-panel-title { font-size: 14px; font-weight: 600; }
+.ws-panel-action { font-size: 12px; color: var(--text-tertiary); cursor: pointer; }
+.ws-panel-action:hover { color: var(--text-secondary); }
+
+/* Chat */
+.chat-messages { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 18px; }
+.chat-msg { display: flex; flex-direction: column; gap: 5px; }
+.chat-msg-role { font-size: 11px; color: var(--text-tertiary); display: flex; align-items: center; gap: 6px; }
+.chat-msg-role .role-dot { width: 6px; height: 6px; border-radius: 50%; }
+.chat-bubble { padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.6; max-width: 90%; }
+.chat-bubble.user { background: var(--blue); color: #fff; align-self: flex-end; }
+.chat-bubble.ai { background: var(--bg-secondary); color: var(--text-primary); }
+.chat-bubble.ai strong { font-weight: 600; }
+.chat-input-area { padding: 12px 18px; border-top: 1px solid var(--border); }
+.chat-input-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; }
+.chat-input-box textarea { width: 100%; border: none; outline: none; resize: none; height: 56px; font-size: 13px; background: transparent; line-height: 1.5; }
+.chat-input-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.chat-shortcuts { display: flex; gap: 6px; flex-wrap: wrap; }
+.chat-shortcut { font-size: 11px; padding: 3px 10px; border-radius: 12px; background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; border: 1px solid var(--border); }
+.chat-shortcut:hover { border-color: var(--border-hover); }
+.chat-send-btn { background: var(--blue); color: #fff; padding: 6px 16px; border-radius: var(--radius); font-size: 12px; font-weight: 500; }
+.chat-send-btn:hover { background: #2563eb; }
+
+/* Pipeline */
+.pipeline-container { flex: 1; overflow-y: auto; padding: 24px 28px; }
+.pipeline-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.pipeline-mode-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.pipeline-mode-btn { font-size: 12px; padding: 5px 12px; color: var(--text-secondary); }
+.pipeline-mode-btn.active { background: var(--bg-secondary); color: var(--text-primary); font-weight: 500; }
+.pipeline-stage { display: flex; gap: 18px; position: relative; }
+.pipeline-stage:not(:last-child) .stage-line { position: absolute; left: 17px; top: 36px; bottom: -20px; width: 2px; background: var(--border); }
+.pipeline-stage.done:not(:last-child) .stage-line { background: var(--green); }
+.stage-icon { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; z-index: 1; position: relative; }
+.stage-icon.done { background: var(--green); color: #fff; }
+.stage-icon.active { background: var(--blue); color: #fff; box-shadow: 0 0 0 4px rgba(59,130,246,0.15); }
+.stage-icon.pending { background: var(--bg-secondary); color: var(--text-tertiary); border: 1px solid var(--border); }
+.stage-body { flex: 1; padding-bottom: 28px; }
+.stage-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.stage-name { font-size: 15px; font-weight: 600; }
+.stage-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
+.stage-detail { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px; }
+.stage-detail-title { font-size: 12px; font-weight: 600; color: var(--text-tertiary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.stage-detail-list { display: flex; flex-direction: column; gap: 6px; }
+.stage-detail-item { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; }
+.stage-detail-item .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--text-tertiary); }
+.stage-actions { display: flex; gap: 8px; }
+.stage-btn { font-size: 12px; padding: 5px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-secondary); }
+.stage-btn:hover { border-color: var(--border-hover); }
+.stage-btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.stage-btn.primary:hover { background: #2563eb; }
+.stage-btn.success { background: var(--green); color: #fff; border-color: var(--green); }
+
+/* Preview Panel */
+.preview-tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 18px; }
+.preview-tab { font-size: 13px; padding: 12px 14px; cursor: pointer; color: var(--text-secondary); border-bottom: 2px solid transparent; }
+.preview-tab.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 500; }
+.preview-tab:hover:not(.active) { color: var(--text-primary); }
+.preview-content { flex: 1; overflow-y: auto; padding: 18px; }
+
+/* PRD Preview */
+.prd-section { margin-bottom: 20px; }
+.prd-section h4 { font-size: 14px; font-weight: 600; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.prd-section p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+.prd-tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.prd-tag { font-size: 12px; padding: 3px 10px; border-radius: 4px; }
+.prd-tag.p0 { background: var(--red-bg); color: var(--red); }
+.prd-tag.p1 { background: var(--amber-bg); color: var(--amber); }
+.prd-tag.p2 { background: var(--green-bg); color: var(--green); }
+.prd-user-story { background: var(--bg-secondary); border-radius: var(--radius); padding: 10px 14px; font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 6px; }
+
+/* Prototype Preview */
+.proto-screen { background: var(--bg-secondary); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.proto-screen-label { font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px; }
+.proto-mockup { background: var(--bg-primary); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+.proto-mockup-header { height: 36px; background: var(--bg-tertiary); display: flex; align-items: center; padding: 0 12px; gap: 6px; }
+.proto-mockup-header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-hover); }
+.proto-mockup-body { padding: 16px; }
+
+/* Code Preview */
+.code-viewer { background: #1e1e2e; border-radius: var(--radius); padding: 16px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.6; overflow-x: auto; }
+.code-viewer .line { color: #cdd6f4; }
+.code-viewer .kw { color: #cba6f7; }
+.code-viewer .str { color: #a6e3a1; }
+.code-viewer .com { color: #6c7086; }
+.code-viewer .fn { color: #89b4fa; }
+.code-viewer .num { color: #fab387; }
+.code-tree { margin-bottom: 12px; }
+.code-tree-item { font-size: 13px; padding: 3px 0; display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-secondary); }
+.code-tree-item:hover { color: var(--text-primary); }
+.code-tree-item .icon { font-size: 14px; }
+.code-tree-item.folder { font-weight: 500; color: var(--text-primary); }
+.code-tree-children { padding-left: 20px; }
+
+/* Live Preview */
+.live-preview-frame { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.live-preview-bar { height: 32px; background: var(--bg-tertiary); display: flex; align-items: center; padding: 0 12px; gap: 8px; border-bottom: 1px solid var(--border); }
+.live-preview-url { flex: 1; font-size: 12px; color: var(--text-tertiary); background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; }
+.live-preview-body { padding: 20px; min-height: 400px; }
+
+/* ====== Template Market ====== */
+.marketplace-content { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.marketplace-hero { text-align: center; padding: 40px 0 32px; }
+.marketplace-hero h1 { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+.marketplace-hero p { font-size: 15px; color: var(--text-secondary); }
+.marketplace-filters { display: flex; gap: 32px; margin-bottom: 24px; align-items: center; padding: 16px 20px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.filter-group { display: flex; gap: 8px; align-items: center; }
+.filter-label { font-size: 13px; color: var(--text-tertiary); white-space: nowrap; }
+.filter-chip { font-size: 13px; padding: 5px 14px; border-radius: var(--radius); cursor: pointer; background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary); }
+.filter-chip.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.filter-chip:hover:not(.active) { border-color: var(--border-hover); }
+.template-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.template-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; cursor: pointer; transition: all 0.15s; }
+.template-card:hover { border-color: var(--border-hover); box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+.template-card-preview { height: 140px; display: flex; align-items: center; justify-content: center; font-size: 36px; font-weight: 700; }
+.template-card-body { padding: 16px 18px; }
+.template-card-name { font-size: 15px; font-weight: 500; margin-bottom: 6px; }
+.template-card-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px; height: 38px; }
+.template-card-meta { display: flex; align-items: center; justify-content: space-between; }
+.template-platforms { display: flex; gap: 4px; }
+.platform-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); color: var(--text-secondary); }
+.template-stats { font-size: 12px; color: var(--text-tertiary); display: flex; gap: 8px; align-items: center; }
+.template-rating { color: var(--amber); }
+
+/* ====== Publish Management ====== */
+.publish-content { padding: 24px; max-width: 1000px; margin: 0 auto; }
+.publish-list { display: flex; flex-direction: column; gap: 16px; }
+.publish-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px 24px; display: flex; align-items: center; gap: 20px; }
+.publish-card-info { flex: 1; }
+.publish-card-name { font-size: 15px; font-weight: 500; margin-bottom: 4px; }
+.publish-card-url { font-size: 13px; color: var(--blue); }
+.publish-card-stats { display: flex; gap: 24px; }
+.publish-stat { text-align: center; }
+.publish-stat-num { font-size: 20px; font-weight: 600; }
+.publish-stat-label { font-size: 11px; color: var(--text-tertiary); }
+.publish-card-actions { display: flex; gap: 8px; }
+
+/* ====== Settings ====== */
+.settings-content { padding: 24px; max-width: 800px; margin: 0 auto; }
+.settings-section { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; margin-bottom: 20px; }
+.settings-section h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.settings-section .desc { font-size: 13px; color: var(--text-tertiary); margin-bottom: 20px; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.settings-row:last-child { border-bottom: none; }
+.settings-row-label { font-size: 14px; }
+.settings-row-value { font-size: 13px; color: var(--text-secondary); }
+.settings-input { width: 200px; height: 34px; border: 1px solid var(--border); border-radius: var(--radius); padding: 0 10px; font-size: 13px; }
+.toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--border); position: relative; cursor: pointer; transition: 0.2s; }
+.toggle.on { background: var(--green); }
+.toggle::after { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: 0.2s; }
+.toggle.on::after { left: 20px; }
+
+/* Pricing */
+.pricing-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 24px; max-width: 1100px; margin: 0 auto; }
+.pricing-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px 20px; text-align: center; position: relative; }
+.pricing-card.featured { border-color: var(--blue); border-width: 2px; }
+.pricing-card.featured::before { content: '推荐'; position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--blue); color: #fff; font-size: 11px; padding: 2px 12px; border-radius: 10px; }
+.pricing-name { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.pricing-price { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+.pricing-period { font-size: 12px; color: var(--text-tertiary); margin-bottom: 16px; }
+.pricing-features { text-align: left; font-size: 13px; color: var(--text-secondary); line-height: 2; margin-bottom: 20px; }
+.pricing-features li { list-style: none; display: flex; align-items: flex-start; gap: 6px; }
+.pricing-features li::before { content: '✓'; color: var(--green); font-weight: 700; }
+.pricing-btn { width: 100%; padding: 10px; border-radius: var(--radius); font-size: 14px; font-weight: 500; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); }
+.pricing-btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* Utility */
+.text-blue { color: var(--blue); }
+.text-green { color: var(--green); }
+.text-amber { color: var(--amber); }
+.text-red { color: var(--red); }
+.flex { display: flex; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.items-center { align-items: center; }
+.mt-16 { margin-top: 16px; }
+.mt-24 { margin-top: 24px; }
+.mb-16 { margin-bottom: 16px; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<!-- ==================== LANDING PAGE ==================== -->
+<div class="page active" id="page-landing">
+  <div class="landing-nav">
+    <div class="landing-nav-logo">
+      <span class="icon">AI</span> AI Dev Studio
+    </div>
+    <div class="landing-nav-links">
+      <a onclick="go('dashboard')">产品</a>
+      <a onclick="go('marketplace')">模板市场</a>
+      <a onclick="go('pricing')">价格</a>
+      <a>文档</a>
+    </div>
+    <div class="landing-nav-actions">
+      <button class="landing-btn-secondary" style="padding: 8px 20px; font-size: 14px;" onclick="go('dashboard')">登录</button>
+      <button class="landing-btn-primary" style="padding: 8px 20px; font-size: 14px;" onclick="go('dashboard')">免费开始</button>
+    </div>
+  </div>
+
+  <div class="landing-hero">
+    <h1>一句话，一个产品</h1>
+    <p>输入你的想法，AI 自动完成需求拆解、技术设计、代码生成到发布上线。<br>从想法到上线，只需几分钟。</p>
+    <div class="landing-hero-cta">
+      <button class="landing-btn-primary" onclick="go('dashboard')">免费开始</button>
+      <button class="landing-btn-secondary" onclick="go('workspace')">查看示例</button>
+    </div>
+  </div>
+
+  <div class="landing-demo">
+    <div class="landing-demo-box">
+      <div class="landing-demo-input">
+        <input type="text" placeholder="描述你想要的产品，如：做一个在线教育平台…" value="做一个在线教育平台，支持课程购买和视频学习">
+        <button onclick="go('workspace')">开始构建</button>
+      </div>
+      <div class="landing-demo-steps">
+        <div class="landing-demo-step">
+          <div class="landing-demo-step-num">1</div>
+          <h4>需求拆解</h4>
+          <p>AI 生成 PRD</p>
+        </div>
+        <div class="landing-demo-step">
+          <div class="landing-demo-step-num">2</div>
+          <h4>方案设计</h4>
+          <p>技术方案 + 原型</p>
+        </div>
+        <div class="landing-demo-step">
+          <div class="landing-demo-step-num">3</div>
+          <h4>代码生成</h4>
+          <p>多端代码</p>
+        </div>
+        <div class="landing-demo-step">
+          <div class="landing-demo-step-num">4</div>
+          <h4>发布上线</h4>
+          <p>一键部署</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="landing-features">
+    <h2>为什么选择 AI Dev Studio</h2>
+    <div class="landing-features-grid">
+      <div class="landing-feature-card">
+        <div class="landing-feature-icon" style="background: var(--blue-bg); color: var(--blue);">💬</div>
+        <h4>对话式开发</h4>
+        <p>用自然语言描述需求，AI 像产品经理一样理解你，像工程师一样实现它</p>
+      </div>
+      <div class="landing-feature-card">
+        <div class="landing-feature-icon" style="background: var(--green-bg); color: var(--green);">📱</div>
+        <h4>多端覆盖</h4>
+        <p>一次描述，同时生成 Web、小程序、App 三端代码，统一技术栈</p>
+      </div>
+      <div class="landing-feature-card">
+        <div class="landing-feature-icon" style="background: var(--purple-bg); color: var(--purple);">🚀</div>
+        <h4>一键发布</h4>
+        <p>内置云托管，生成即上线。也支持导出代码到你的 Git 仓库</p>
+      </div>
+      <div class="landing-feature-card">
+        <div class="landing-feature-icon" style="background: var(--amber-bg); color: var(--amber);">🔄</div>
+        <h4>混合模式</h4>
+        <p>全自动流水线或逐步确认，你决定每个环节的参与度</p>
+      </div>
+      <div class="landing-feature-card">
+        <div class="landing-feature-icon" style="background: var(--red-bg); color: var(--red);">📋</div>
+        <h4>模板市场</h4>
+        <p>电商、教育、餐饮…从精选模板开始，几秒创建项目</p>
+      </div>
+      <div class="landing-feature-card">
+        <div class="landing-feature-icon" style="background: var(--bg-tertiary); color: var(--text-secondary);">👥</div>
+        <h4>团队协作</h4>
+        <p>创建团队，共享项目，权限管理，让整个团队一起高效产出</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== DASHBOARD ==================== -->
+<div class="page" id="page-dashboard">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo" onclick="go('landing')"><span class="icon">AI</span> AI Dev Studio</div>
+      <div class="topbar-nav">
+        <span class="topbar-nav-item active" onclick="go('dashboard')">工作台</span>
+        <span class="topbar-nav-item" onclick="go('marketplace')">模板市场</span>
+        <span class="topbar-nav-item" onclick="go('publish')">发布管理</span>
+        <span class="topbar-nav-item" onclick="go('settings')">设置</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <input class="topbar-search" placeholder="搜索项目…">
+      <div class="topbar-icon-btn">🔔</div>
+      <button class="upgrade-btn" onclick="go('pricing')">升级套餐</button>
+      <div class="topbar-avatar" onclick="go('settings')">TD</div>
+    </div>
+  </div>
+
+  <div class="dashboard-content">
+    <div class="create-bar">
+      <div class="create-input-wrapper">
+        <span class="create-input-icon">💡</span>
+        <input type="text" placeholder="输入一句话描述你的产品想法…" onkeydown="if(event.key==='Enter')go('workspace')">
+      </div>
+      <button class="create-upload-btn">📎 上传文档</button>
+      <button class="create-go-btn" onclick="go('workspace')">创建项目</button>
+    </div>
+
+    <div class="section-header">
+      <span class="section-title">我的项目</span>
+      <div class="section-tabs">
+        <span class="section-tab active">全部 (6)</span>
+        <span class="section-tab">进行中 (3)</span>
+        <span class="section-tab">已完成 (2)</span>
+        <span class="section-tab">草稿 (1)</span>
+      </div>
+    </div>
+
+    <div class="project-grid">
+      <div class="project-card" onclick="go('workspace')">
+        <div class="project-card-icon" style="background: var(--blue-bg); color: var(--blue);">ED</div>
+        <div class="project-card-name">在线教育平台</div>
+        <div class="project-card-desc">课程购买、视频学习、积分系统，支持 Web 和小程序</div>
+        <div class="project-card-meta">
+          <span class="badge badge-progress">代码生成中</span>
+          <span>2 分钟前</span>
+        </div>
+      </div>
+      <div class="project-card" onclick="go('workspace')">
+        <div class="project-card-icon" style="background: var(--green-bg); color: var(--green);">SH</div>
+        <div class="project-card-name">电商小程序</div>
+        <div class="project-card-desc">商品展示、购物车、订单管理、微信支付，已上线运营</div>
+        <div class="project-card-meta">
+          <span class="badge badge-done">已发布</span>
+          <span>3 小时前</span>
+        </div>
+      </div>
+      <div class="project-card" onclick="go('workspace')">
+        <div class="project-card-icon" style="background: var(--amber-bg); color: var(--amber);">CM</div>
+        <div class="project-card-name">社区论坛</div>
+        <div class="project-card-desc">帖子发布、评论互动、用户关注、内容审核系统</div>
+        <div class="project-card-meta">
+          <span class="badge badge-progress">方案设计中</span>
+          <span>昨天</span>
+        </div>
+      </div>
+      <div class="project-card" onclick="go('workspace')">
+        <div class="project-card-icon" style="background: #fce7f3; color: #db2777;">LP</div>
+        <div class="project-card-name">产品落地页</div>
+        <div class="project-card-desc">品牌展示、功能介绍、获客表单、数据追踪，已上线</div>
+        <div class="project-card-meta">
+          <span class="badge badge-done">已发布</span>
+          <span>2 天前</span>
+        </div>
+      </div>
+      <div class="project-card" onclick="go('workspace')">
+        <div class="project-card-icon" style="background: var(--bg-tertiary); color: var(--text-secondary);">BK</div>
+        <div class="project-card-name">企业博客系统</div>
+        <div class="project-card-desc">文章管理、分类标签、评论系统、Markdown 编辑器</div>
+        <div class="project-card-meta">
+          <span class="badge badge-draft">草稿</span>
+          <span>3 天前</span>
+        </div>
+      </div>
+      <div class="project-card" onclick="go('workspace')">
+        <div class="project-card-icon" style="background: var(--purple-bg); color: var(--purple);">AD</div>
+        <div class="project-card-name">后台管理系统</div>
+        <div class="project-card-desc">数据看板、用户管理、权限控制、操作日志审计</div>
+        <div class="project-card-meta">
+          <span class="badge badge-progress">需求拆解中</span>
+          <span>5 分钟前</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <span class="section-title">最近活动</span>
+    </div>
+    <div class="activity-panel">
+      <div class="activity-item">
+        <div class="activity-dot" style="background: var(--blue);"></div>
+        <div class="activity-text"><strong>在线教育平台</strong> 已完成 Web 端代码生成，等待确认后继续生成小程序端</div>
+        <div class="activity-time">2 分钟前</div>
+      </div>
+      <div class="activity-item">
+        <div class="activity-dot" style="background: var(--green);"></div>
+        <div class="activity-text"><strong>电商小程序</strong> 已发布上线，访问地址: shop.aidev.app</div>
+        <div class="activity-time">3 小时前</div>
+      </div>
+      <div class="activity-item">
+        <div class="activity-dot" style="background: var(--amber);"></div>
+        <div class="activity-text"><strong>社区论坛</strong> 技术方案已生成，包含 8 个页面原型图</div>
+        <div class="activity-time">昨天</div>
+      </div>
+      <div class="activity-item">
+        <div class="activity-dot" style="background: var(--green);"></div>
+        <div class="activity-text"><strong>产品落地页</strong> 已发布上线，访问地址: landing.aidev.app</div>
+        <div class="activity-time">2 天前</div>
+      </div>
+      <div class="activity-item">
+        <div class="activity-dot" style="background: var(--purple);"></div>
+        <div class="activity-text"><strong>后台管理系统</strong> 开始需求拆解，AI 正在分析输入内容…</div>
+        <div class="activity-time">5 分钟前</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== PROJECT WORKSPACE ==================== -->
+<div class="page" id="page-workspace">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo" onclick="go('dashboard')"><span class="icon">AI</span> AI Dev Studio</div>
+      <div class="topbar-nav">
+        <span class="topbar-nav-item" onclick="go('dashboard')">工作台</span>
+        <span class="topbar-nav-item" onclick="go('marketplace')">模板市场</span>
+        <span class="topbar-nav-item" onclick="go('publish')">发布管理</span>
+        <span class="topbar-nav-item" onclick="go('settings')">设置</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-icon-btn">🔔</div>
+      <div class="topbar-avatar" onclick="go('settings')">TD</div>
+    </div>
+  </div>
+
+  <div class="workspace">
+    <!-- Left: Chat Panel -->
+    <div class="ws-panel-left">
+      <div class="ws-panel-header">
+        <span class="ws-panel-title">💬 对话面板</span>
+        <span class="ws-panel-action">历史记录</span>
+      </div>
+      <div class="chat-messages">
+        <div class="chat-msg">
+          <div class="chat-msg-role"><span class="role-dot" style="background: var(--blue);"></span> 我</div>
+          <div class="chat-bubble user">帮我做一个在线教育平台，支持课程购买和视频学习</div>
+        </div>
+        <div class="chat-msg">
+          <div class="chat-msg-role"><span class="role-dot" style="background: var(--green);"></span> AI 助手</div>
+          <div class="chat-bubble ai">已收到需求！我正在分析拆解，生成产品需求文档。主要包含：<strong>课程展示、视频播放、购买支付、用户中心</strong>等模块。请查看右侧 PRD 预览。</div>
+        </div>
+        <div class="chat-msg">
+          <div class="chat-msg-role"><span class="role-dot" style="background: var(--blue);"></span> 我</div>
+          <div class="chat-bubble user">加一个积分系统，购买课程可以积分</div>
+        </div>
+        <div class="chat-msg">
+          <div class="chat-msg-role"><span class="role-dot" style="background: var(--green);"></span> AI 助手</div>
+          <div class="chat-bubble ai">已添加<strong>积分系统</strong>模块。购买课程按金额 1:1 获得积分，积分可抵扣后续订单 10%。PRD 已更新，功能优先级标记为 P1。</div>
+        </div>
+        <div class="chat-msg">
+          <div class="chat-msg-role"><span class="role-dot" style="background: var(--blue);"></span> 我</div>
+          <div class="chat-bubble user">小程序端也需要</div>
+        </div>
+        <div class="chat-msg">
+          <div class="chat-msg-role"><span class="role-dot" style="background: var(--green);"></span> AI 助手</div>
+          <div class="chat-bubble ai">好的，目标平台已更新为 <strong>Web + 小程序</strong>。技术方案将使用 Taro 3 框架，一套代码同时编译 Web 和小程序端。</div>
+        </div>
+        <div class="chat-msg">
+          <div class="chat-msg-role"><span class="role-dot" style="background: var(--amber);"></span> 系统</div>
+          <div class="chat-bubble ai" style="background: var(--amber-bg); color: var(--text-primary); border: 1px solid var(--amber-border);">⚠️ 代码生成阶段已完成 Web 端，等待你的确认后继续生成小程序端代码。</div>
+        </div>
+      </div>
+      <div class="chat-input-area">
+        <div class="chat-input-box">
+          <textarea placeholder="输入消息或指令，如"把首页改成深色主题"…"></textarea>
+        </div>
+        <div class="chat-input-footer">
+          <div class="chat-shortcuts">
+            <span class="chat-shortcut">改配色</span>
+            <span class="chat-shortcut">加功能</span>
+            <span class="chat-shortcut">重新生成</span>
+          </div>
+          <button class="chat-send-btn">发送 →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Middle: Pipeline -->
+    <div class="ws-panel-mid">
+      <div class="ws-panel-header">
+        <span class="ws-panel-title">📊 流水线看板</span>
+        <div class="pipeline-mode-toggle">
+          <span class="pipeline-mode-btn">全自动</span>
+          <span class="pipeline-mode-btn active">逐步确认</span>
+        </div>
+      </div>
+      <div class="pipeline-container">
+        <!-- Stage 1: Done -->
+        <div class="pipeline-stage done">
+          <div class="stage-icon done">✓</div>
+          <div class="stage-line"></div>
+          <div class="stage-body">
+            <div class="stage-header">
+              <span class="stage-name">需求拆解</span>
+              <span class="badge badge-done">已完成</span>
+            </div>
+            <div class="stage-desc">AI 解析输入内容，生成结构化 PRD，包含 8 个功能模块和 23 个用户故事</div>
+            <div class="stage-detail">
+              <div class="stage-detail-title">产出物</div>
+              <div class="stage-detail-list">
+                <div class="stage-detail-item"><span class="dot"></span> 产品需求文档 (PRD)</div>
+                <div class="stage-detail-item"><span class="dot"></span> 功能列表 - 8 个模块, 23 个用户故事</div>
+                <div class="stage-detail-item"><span class="dot"></span> 数据实体 - 5 个核心对象</div>
+                <div class="stage-detail-item"><span class="dot"></span> 页面清单 - 12 个页面</div>
+              </div>
+            </div>
+            <div class="stage-actions">
+              <button class="stage-btn" onclick="switchPreview('prd')">查看 PRD</button>
+              <button class="stage-btn">重新生成</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 2: Done -->
+        <div class="pipeline-stage done">
+          <div class="stage-icon done">✓</div>
+          <div class="stage-line"></div>
+          <div class="stage-body">
+            <div class="stage-header">
+              <span class="stage-name">方案设计</span>
+              <span class="badge badge-done">已完成</span>
+            </div>
+            <div class="stage-desc">技术选型: Taro 3 + React + Node.js + PostgreSQL，已生成 12 个页面原型图</div>
+            <div class="stage-detail">
+              <div class="stage-detail-title">产出物</div>
+              <div class="stage-detail-list">
+                <div class="stage-detail-item"><span class="dot"></span> 技术方案文档</div>
+                <div class="stage-detail-item"><span class="dot"></span> 页面结构树 + 路由设计</div>
+                <div class="stage-detail-item"><span class="dot"></span> 数据模型 ER 图</div>
+                <div class="stage-detail-item"><span class="dot"></span> API 接口列表 - 34 个</div>
+                <div class="stage-detail-item"><span class="dot"></span> 页面原型图 x 12</div>
+              </div>
+            </div>
+            <div class="stage-actions">
+              <button class="stage-btn" onclick="switchPreview('prototype')">查看原型</button>
+              <button class="stage-btn">查看技术方案</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 3: Active -->
+        <div class="pipeline-stage">
+          <div class="stage-icon active">3</div>
+          <div class="stage-line"></div>
+          <div class="stage-body">
+            <div class="stage-header">
+              <span class="stage-name">代码生成</span>
+              <span class="badge badge-waiting">待确认</span>
+            </div>
+            <div class="stage-desc">已生成全部页面代码（Web 端），等待确认后继续生成小程序端</div>
+            <div class="stage-detail">
+              <div class="stage-detail-title">已生成</div>
+              <div class="stage-detail-list">
+                <div class="stage-detail-item"><span class="dot" style="background: var(--green);"></span> 前端代码 - 28 个组件, 12 个页面</div>
+                <div class="stage-detail-item"><span class="dot" style="background: var(--green);"></span> 后端代码 - 34 个 API, 5 个数据模型</div>
+                <div class="stage-detail-item"><span class="dot" style="background: var(--green);"></span> 配置文件 - 构建/部署/环境变量</div>
+                <div class="stage-detail-item"><span class="dot" style="background: var(--amber);"></span> 小程序端代码 - 等待生成</div>
+              </div>
+            </div>
+            <div class="stage-actions">
+              <button class="stage-btn primary" onclick="switchPreview('code')">确认并继续</button>
+              <button class="stage-btn" onclick="switchPreview('live')">在线预览</button>
+              <button class="stage-btn" onclick="switchPreview('code')">查看代码</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 4: Pending -->
+        <div class="pipeline-stage">
+          <div class="stage-icon pending">4</div>
+          <div class="stage-body">
+            <div class="stage-header">
+              <span class="stage-name">发布上线</span>
+              <span class="badge badge-draft">等待中</span>
+            </div>
+            <div class="stage-desc">代码确认后将进入发布流程，可选择云托管或导出代码</div>
+            <div class="stage-detail">
+              <div class="stage-detail-title">发布选项</div>
+              <div class="stage-detail-list">
+                <div class="stage-detail-item"><span class="dot"></span> 内置云托管 - 自动分配域名</div>
+                <div class="stage-detail-item"><span class="dot"></span> 导出代码 - GitHub / GitLab</div>
+                <div class="stage-detail-item"><span class="dot"></span> 自定义域名 (付费功能)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Preview Panel -->
+    <div class="ws-panel-right">
+      <div class="preview-tabs">
+        <span class="preview-tab" data-tab="prd" onclick="switchPreview('prd')">PRD</span>
+        <span class="preview-tab" data-tab="prototype" onclick="switchPreview('prototype')">原型图</span>
+        <span class="preview-tab active" data-tab="code" onclick="switchPreview('code')">代码</span>
+        <span class="preview-tab" data-tab="live" onclick="switchPreview('live')">预览</span>
+      </div>
+
+      <!-- PRD Preview -->
+      <div class="preview-content" id="preview-prd" style="display:none;">
+        <div class="prd-section">
+          <h4>产品概述</h4>
+          <p><strong>定位</strong>：面向 K12 和成人教育的在线学习平台<br><strong>目标用户</strong>：学习者、课程讲师<br><strong>核心价值</strong>：一站式课程购买与视频学习</p>
+        </div>
+        <div class="prd-section">
+          <h4>功能列表</h4>
+          <div class="prd-tag-row">
+            <span class="prd-tag p0">P0 课程展示</span>
+            <span class="prd-tag p0">P0 视频播放</span>
+            <span class="prd-tag p0">P0 购买支付</span>
+            <span class="prd-tag p0">P0 用户注册登录</span>
+            <span class="prd-tag p1">P1 积分系统</span>
+            <span class="prd-tag p1">P1 用户中心</span>
+            <span class="prd-tag p1">P1 课程搜索</span>
+            <span class="prd-tag p2">P2 课程评价</span>
+            <span class="prd-tag p2">P2 学习进度</span>
+            <span class="prd-tag p2">P2 收藏夹</span>
+          </div>
+        </div>
+        <div class="prd-section">
+          <h4>用户故事</h4>
+          <div class="prd-user-story">作为学习者，我想浏览课程列表，以便找到我感兴趣的课程</div>
+          <div class="prd-user-story">作为学习者，我想购买课程并用积分抵扣，以便节省学习成本</div>
+          <div class="prd-user-story">作为学习者，我想在视频中标记重点，以便复习时快速定位</div>
+          <div class="prd-user-story">作为讲师，我想上传课程视频并设置价格，以便售卖我的课程</div>
+        </div>
+        <div class="prd-section">
+          <h4>数据实体</h4>
+          <p>User · Course · Lesson · Order · PointsRecord · Comment</p>
+        </div>
+        <div class="prd-section">
+          <h4>目标平台</h4>
+          <p>Web · 小程序</p>
+        </div>
+      </div>
+
+      <!-- Prototype Preview -->
+      <div class="preview-content" id="preview-prototype" style="display:none;">
+        <div class="proto-screen">
+          <div class="proto-screen-label">课程列表页</div>
+          <div class="proto-mockup">
+            <div class="proto-mockup-header"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <div class="proto-mockup-body">
+              <div style="font-size: 16px; font-weight: 600; margin-bottom: 12px;">热门课程</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <div style="background:var(--bg-secondary);border-radius:6px;padding:8px;">
+                  <div style="height:40px;background:var(--bg-tertiary);border-radius:4px;margin-bottom:6px;"></div>
+                  <div style="font-size:11px;font-weight:500;">React 入门</div>
+                  <div style="font-size:10px;color:var(--text-tertiary);">¥199</div>
+                </div>
+                <div style="background:var(--bg-secondary);border-radius:6px;padding:8px;">
+                  <div style="height:40px;background:var(--bg-tertiary);border-radius:4px;margin-bottom:6px;"></div>
+                  <div style="font-size:11px;font-weight:500;">Vue 实战</div>
+                  <div style="font-size:10px;color:var(--text-tertiary);">¥149</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="proto-screen">
+          <div class="proto-screen-label">课程详情页</div>
+          <div class="proto-mockup">
+            <div class="proto-mockup-header"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <div class="proto-mockup-body">
+              <div style="height:60px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:10px;"></div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:4px;">React 从入门到精通</div>
+              <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px;">张老师 · 32 课时</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:14px;font-weight:600;color:var(--red);">¥199</span>
+                <span style="font-size:11px;background:var(--blue);color:#fff;padding:4px 12px;border-radius:4px;">立即购买</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="proto-screen">
+          <div class="proto-screen-label">个人中心</div>
+          <div class="proto-mockup">
+            <div class="proto-mockup-header"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            <div class="proto-mockup-body">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <div style="width:36px;height:36px;border-radius:50%;background:var(--blue-bg);"></div>
+                <div>
+                  <div style="font-size:12px;font-weight:500;">张三</div>
+                  <div style="font-size:10px;color:var(--text-tertiary);">积分: 1,250</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <div style="font-size:11px;padding:6px 8px;background:var(--bg-secondary);border-radius:4px;">我的课程</div>
+                <div style="font-size:11px;padding:6px 8px;background:var(--bg-secondary);border-radius:4px;">订单记录</div>
+                <div style="font-size:11px;padding:6px 8px;background:var(--bg-secondary);border-radius:4px;">积分明细</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Code Preview -->
+      <div class="preview-content" id="preview-code">
+        <div class="code-tree">
+          <div class="code-tree-item folder">📁 src</div>
+          <div class="code-tree-children">
+            <div class="code-tree-item folder">📁 components</div>
+            <div class="code-tree-children">
+              <div class="code-tree-item">📄 CourseCard.tsx</div>
+              <div class="code-tree-item">📄 VideoPlayer.tsx</div>
+              <div class="code-tree-item">📄 PointsBadge.tsx</div>
+            </div>
+            <div class="code-tree-item folder">📁 pages</div>
+            <div class="code-tree-children">
+              <div class="code-tree-item">📄 index.tsx</div>
+              <div class="code-tree-item">📄 CourseDetail.tsx</div>
+              <div class="code-tree-item">📄 Profile.tsx</div>
+            </div>
+            <div class="code-tree-item folder">📁 services</div>
+            <div class="code-tree-children">
+              <div class="code-tree-item">📄 api.ts</div>
+              <div class="code-tree-item">📄 course.ts</div>
+            </div>
+          </div>
+        </div>
+        <div class="code-viewer">
+<div class="line"><span class="com">// CourseCard.tsx</span></div>
+<div class="line"><span class="kw">import</span> React <span class="kw">from</span> <span class="str">'react'</span>;</div>
+<div class="line"><span class="kw">import</span> { <span class="fn">useNavigate</span> } <span class="kw">from</span> <span class="str">'@tarojs/taro'</span>;</div>
+<div class="line">&nbsp;</div>
+<div class="line"><span class="kw">interface</span> <span class="fn">CourseCardProps</span> {</div>
+<div class="line">&nbsp;&nbsp;course: {</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;id: <span class="fn">string</span>;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;title: <span class="fn">string</span>;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;price: <span class="fn">number</span>;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;coverUrl: <span class="fn">string</span>;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;teacher: <span class="fn">string</span>;</div>
+<div class="line">&nbsp;&nbsp;};</div>
+<div class="line">}</div>
+<div class="line">&nbsp;</div>
+<div class="line"><span class="kw">export const</span> <span class="fn">CourseCard</span>: React.<span class="fn">FC</span>&lt;CourseCardProps&gt; = ({</div>
+<div class="line">&nbsp;&nbsp;course,</div>
+<div class="line">}) =&gt; {</div>
+<div class="line">&nbsp;&nbsp;<span class="kw">const</span> navigate = <span class="fn">useNavigate</span>();</div>
+<div class="line">&nbsp;</div>
+<div class="line">&nbsp;&nbsp;<span class="kw">return</span> (</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;&lt;<span class="kw">View</span> <span class="fn">className</span>=<span class="str">"course-card"</span></div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="fn">onClick</span>={() =&gt; <span class="fn">navigate</span>(<span class="str">`/detail?id=</span>${course.id}<span class="str">`</span>)}&gt;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;<span class="kw">Image</span> <span class="fn">src</span>={course.coverUrl} /&gt;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;<span class="kw">Text</span> <span class="fn">className</span>=<span class="str">"title"</span>&gt;{course.title}&lt;/<span class="kw">Text</span>&gt;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;<span class="kw">Text</span> <span class="fn">className</span>=<span class="str">"price"</span>&gt;¥{course.price}&lt;/<span class="kw">Text</span>&gt;</div>
+<div class="line">&nbsp;&nbsp;&nbsp;&nbsp;&lt;/<span class="kw">View</span>&gt;</div>
+<div class="line">&nbsp;&nbsp;);</div>
+<div class="line">};</div>
+        </div>
+      </div>
+
+      <!-- Live Preview -->
+      <div class="preview-content" id="preview-live" style="display:none;">
+        <div class="live-preview-frame">
+          <div class="live-preview-bar">
+            <span style="font-size:12px;color:var(--text-tertiary);">🌐</span>
+            <div class="live-preview-url">edu-demo.aidev.app</div>
+            <span style="font-size:12px;cursor:pointer;">↻</span>
+          </div>
+          <div class="live-preview-body">
+            <div style="text-align:center;margin-bottom:20px;">
+              <div style="font-size:20px;font-weight:700;margin-bottom:4px;">在线教育平台</div>
+              <div style="font-size:13px;color:var(--text-secondary);">优质课程，随时随地学习</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+              <div style="background:var(--bg-secondary);border-radius:8px;padding:12px;">
+                <div style="height:50px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:20px;">📚</div>
+                <div style="font-size:12px;font-weight:500;">React 从入门到精通</div>
+                <div style="font-size:11px;color:var(--text-tertiary);">张老师 · 32课时</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+                  <span style="font-size:13px;font-weight:600;color:var(--red);">¥199</span>
+                  <span style="font-size:10px;background:var(--blue);color:#fff;padding:2px 8px;border-radius:4px;">购买</span>
+                </div>
+              </div>
+              <div style="background:var(--bg-secondary);border-radius:8px;padding:12px;">
+                <div style="height:50px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:20px;">🎨</div>
+                <div style="font-size:12px;font-weight:500;">Vue 3 实战指南</div>
+                <div style="font-size:11px;color:var(--text-tertiary);">李老师 · 28课时</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+                  <span style="font-size:13px;font-weight:600;color:var(--red);">¥149</span>
+                  <span style="font-size:10px;background:var(--blue);color:#fff;padding:2px 8px;border-radius:4px;">购买</span>
+                </div>
+              </div>
+            </div>
+            <div style="background:var(--bg-secondary);border-radius:8px;padding:12px;">
+              <div style="font-size:12px;font-weight:500;margin-bottom:8px;">我的积分</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:20px;font-weight:700;color:var(--amber);">1,250</span>
+                <span style="font-size:11px;color:var(--text-tertiary);">可抵扣 ¥125</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TEMPLATE MARKETPLACE ==================== -->
+<div class="page" id="page-marketplace">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo" onclick="go('landing')"><span class="icon">AI</span> AI Dev Studio</div>
+      <div class="topbar-nav">
+        <span class="topbar-nav-item" onclick="go('dashboard')">工作台</span>
+        <span class="topbar-nav-item active" onclick="go('marketplace')">模板市场</span>
+        <span class="topbar-nav-item" onclick="go('publish')">发布管理</span>
+        <span class="topbar-nav-item" onclick="go('settings')">设置</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <input class="topbar-search" placeholder="搜索模板…">
+      <div class="topbar-avatar" onclick="go('settings')">TD</div>
+    </div>
+  </div>
+
+  <div class="marketplace-content">
+    <div class="marketplace-hero">
+      <h1>模板市场</h1>
+      <p>从精选模板开始，几秒钟创建你的产品</p>
+    </div>
+
+    <div class="marketplace-filters">
+      <div class="filter-group">
+        <span class="filter-label">行业</span>
+        <span class="filter-chip active">全部</span>
+        <span class="filter-chip">电商</span>
+        <span class="filter-chip">教育</span>
+        <span class="filter-chip">餐饮</span>
+        <span class="filter-chip">企业服务</span>
+        <span class="filter-chip">社交</span>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">平台</span>
+        <span class="filter-chip active">全部</span>
+        <span class="filter-chip">Web</span>
+        <span class="filter-chip">小程序</span>
+        <span class="filter-chip">App</span>
+      </div>
+    </div>
+
+    <div class="template-grid">
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: var(--blue-bg); color: var(--blue);">EC</div>
+        <div class="template-card-body">
+          <div class="template-card-name">电商商城</div>
+          <div class="template-card-desc">商品展示、购物车、订单管理、支付、会员系统</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">Web</span><span class="platform-tag">小程序</span><span class="platform-tag">App</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.8</span> · 1.2k 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: var(--green-bg); color: var(--green);">ED</div>
+        <div class="template-card-body">
+          <div class="template-card-name">在线教育</div>
+          <div class="template-card-desc">课程管理、视频播放、购买支付、学习进度追踪</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">Web</span><span class="platform-tag">小程序</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.9</span> · 856 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: var(--amber-bg); color: var(--amber);">RP</div>
+        <div class="template-card-body">
+          <div class="template-card-name">餐饮点单</div>
+          <div class="template-card-desc">菜单展示、在线点单、排队叫号、外卖配送</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">小程序</span><span class="platform-tag">App</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.6</span> · 643 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: var(--purple-bg); color: var(--purple);">AD</div>
+        <div class="template-card-body">
+          <div class="template-card-name">管理后台</div>
+          <div class="template-card-desc">数据看板、用户管理、权限控制、操作日志审计</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">Web</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.7</span> · 2.1k 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: #fce7f3; color: #db2777;">LP</div>
+        <div class="template-card-body">
+          <div class="template-card-name">产品落地页</div>
+          <div class="template-card-desc">品牌展示、功能介绍、获客表单、数据追踪</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">Web</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.5</span> · 1.5k 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: var(--bg-tertiary); color: var(--text-secondary);">CM</div>
+        <div class="template-card-body">
+          <div class="template-card-name">社区论坛</div>
+          <div class="template-card-desc">帖子发布、评论互动、用户关注、内容审核</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">Web</span><span class="platform-tag">App</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.4</span> · 478 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: var(--red-bg); color: var(--red);">HM</div>
+        <div class="template-card-body">
+          <div class="template-card-name">健康管理</div>
+          <div class="template-card-desc">健康数据记录、运动追踪、饮食管理、提醒通知</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">小程序</span><span class="platform-tag">App</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.3</span> · 312 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: #ccfbf1; color: #0d9488;">BK</div>
+        <div class="template-card-body">
+          <div class="template-card-name">企业博客</div>
+          <div class="template-card-desc">文章管理、分类标签、评论系统、Markdown 编辑</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">Web</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.5</span> · 689 使用</div>
+          </div>
+        </div>
+      </div>
+      <div class="template-card" onclick="go('workspace')">
+        <div class="template-card-preview" style="background: #fef3c7; color: #b45309;">FM</div>
+        <div class="template-card-body">
+          <div class="template-card-name">表单工具</div>
+          <div class="template-card-desc">自定义表单、数据收集、统计分析、导出报表</div>
+          <div class="template-card-meta">
+            <div class="template-platforms"><span class="platform-tag">Web</span><span class="platform-tag">小程序</span></div>
+            <div class="template-stats"><span class="template-rating">★ 4.6</span> · 1.1k 使用</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== PUBLISH MANAGEMENT ==================== -->
+<div class="page" id="page-publish">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo" onclick="go('landing')"><span class="icon">AI</span> AI Dev Studio</div>
+      <div class="topbar-nav">
+        <span class="topbar-nav-item" onclick="go('dashboard')">工作台</span>
+        <span class="topbar-nav-item" onclick="go('marketplace')">模板市场</span>
+        <span class="topbar-nav-item active" onclick="go('publish')">发布管理</span>
+        <span class="topbar-nav-item" onclick="go('settings')">设置</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-avatar" onclick="go('settings')">TD</div>
+    </div>
+  </div>
+
+  <div class="publish-content">
+    <div class="section-header">
+      <span class="section-title">已发布应用</span>
+      <div class="section-tabs">
+        <span class="section-tab active">全部 (2)</span>
+        <span class="section-tab">运行中 (2)</span>
+        <span class="section-tab">已下线</span>
+      </div>
+    </div>
+
+    <div class="publish-list">
+      <div class="publish-card">
+        <div class="project-card-icon" style="background: var(--green-bg); color: var(--green); margin: 0;">SH</div>
+        <div class="publish-card-info">
+          <div class="publish-card-name">电商小程序</div>
+          <div class="publish-card-url">🔗 shop.aidev.app</div>
+        </div>
+        <div class="publish-card-stats">
+          <div class="publish-stat">
+            <div class="publish-stat-num">1,247</div>
+            <div class="publish-stat-label">访问量</div>
+          </div>
+          <div class="publish-stat">
+            <div class="publish-stat-num">89</div>
+            <div class="publish-stat-label">订单</div>
+          </div>
+          <div class="publish-stat">
+            <div class="publish-stat-num">99.9%</div>
+            <div class="publish-stat-label">可用性</div>
+          </div>
+        </div>
+        <div class="publish-card-actions">
+          <button class="stage-btn">访问</button>
+          <button class="stage-btn">配置</button>
+          <button class="stage-btn">回滚</button>
+        </div>
+      </div>
+
+      <div class="publish-card">
+        <div class="project-card-icon" style="background: #fce7f3; color: #db2777; margin: 0;">LP</div>
+        <div class="publish-card-info">
+          <div class="publish-card-name">产品落地页</div>
+          <div class="publish-card-url">🔗 landing.aidev.app</div>
+        </div>
+        <div class="publish-card-stats">
+          <div class="publish-stat">
+            <div class="publish-stat-num">3,456</div>
+            <div class="publish-stat-label">访问量</div>
+          </div>
+          <div class="publish-stat">
+            <div class="publish-stat-num">124</div>
+            <div class="publish-stat-label">注册</div>
+          </div>
+          <div class="publish-stat">
+            <div class="publish-stat-num">100%</div>
+            <div class="publish-stat-label">可用性</div>
+          </div>
+        </div>
+        <div class="publish-card-actions">
+          <button class="stage-btn">访问</button>
+          <button class="stage-btn">配置</button>
+          <button class="stage-btn">回滚</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-header mt-24">
+      <span class="section-title">部署配置</span>
+    </div>
+    <div class="settings-section">
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">默认发布方式</div>
+          <div class="settings-row-value">新项目完成后的默认发布方式</div>
+        </div>
+        <select class="settings-input">
+          <option>内置云托管</option>
+          <option>导出到 GitHub</option>
+          <option>每次询问</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">自定义域名</div>
+          <div class="settings-row-value">绑定你的域名 (专业版功能)</div>
+        </div>
+        <button class="stage-btn">配置域名</button>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">自动部署</div>
+          <div class="settings-row-value">代码更新后自动重新部署</div>
+        </div>
+        <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">CDN 加速</div>
+          <div class="settings-row-value">为静态资源启用 CDN (专业版功能)</div>
+        </div>
+        <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SETTINGS ==================== -->
+<div class="page" id="page-settings">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo" onclick="go('landing')"><span class="icon">AI</span> AI Dev Studio</div>
+      <div class="topbar-nav">
+        <span class="topbar-nav-item" onclick="go('dashboard')">工作台</span>
+        <span class="topbar-nav-item" onclick="go('marketplace')">模板市场</span>
+        <span class="topbar-nav-item" onclick="go('publish')">发布管理</span>
+        <span class="topbar-nav-item active" onclick="go('settings')">设置</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="upgrade-btn" onclick="go('pricing')">升级套餐</button>
+      <div class="topbar-avatar">TD</div>
+    </div>
+  </div>
+
+  <div class="settings-content">
+    <div class="settings-section">
+      <h3>账户信息</h3>
+      <div class="desc">管理你的账户基本信息</div>
+      <div class="settings-row">
+        <div class="settings-row-label">头像</div>
+        <div class="topbar-avatar" style="width:40px;height:40px;font-size:14px;">TD</div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">昵称</div>
+        <input class="settings-input" value="techdog">
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">邮箱</div>
+        <input class="settings-input" value="techdog@example.com">
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">手机号</div>
+        <input class="settings-input" value="138****8888">
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>当前套餐</h3>
+      <div class="desc">你当前使用的是免费版</div>
+      <div class="settings-row">
+        <div class="settings-row-label">套餐类型</div>
+        <div class="settings-row-value"><span class="badge badge-draft">免费版</span></div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">项目数量</div>
+        <div class="settings-row-value">6 / 3 (已超限)</div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">AI 算力点数</div>
+        <div class="settings-row-value">剩余 145 / 500 点</div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">云托管流量</div>
+        <div class="settings-row-value">1.2GB / 5GB</div>
+      </div>
+      <div style="margin-top:16px;">
+        <button class="stage-btn primary" onclick="go('pricing')">升级到专业版</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>项目偏好</h3>
+      <div class="desc">设置新项目的默认配置</div>
+      <div class="settings-row">
+        <div class="settings-row-label">默认目标平台</div>
+        <select class="settings-input">
+          <option>每次选择</option>
+          <option>Web</option>
+          <option>小程序</option>
+          <option>App</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">默认流水线模式</div>
+        <select class="settings-input">
+          <option>逐步确认</option>
+          <option>全自动</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">自动保存版本</div>
+        <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>团队成员</h3>
+      <div class="desc">管理团队成员和权限 (团队版功能)</div>
+      <div class="settings-row">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="topbar-avatar" style="background:var(--green);">TD</div>
+          <div>
+            <div class="settings-row-label">techdog (我)</div>
+            <div class="settings-row-value">管理员</div>
+          </div>
+        </div>
+        <span class="badge badge-done">管理员</span>
+      </div>
+      <div class="settings-row">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="topbar-avatar" style="background:var(--purple);">AB</div>
+          <div>
+            <div class="settings-row-label">Alice</div>
+            <div class="settings-row-value">alice@example.com</div>
+          </div>
+        </div>
+        <span class="badge badge-progress">编辑者</span>
+      </div>
+      <div style="margin-top:16px;">
+        <button class="stage-btn">+ 邀请成员</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>API 密钥</h3>
+      <div class="desc">用于通过 API 调用平台能力</div>
+      <div class="settings-row">
+        <div class="settings-row-label">API Key</div>
+        <div class="settings-row-value">aid-xxxx...xxxx-2026</div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:8px;">
+        <button class="stage-btn">复制</button>
+        <button class="stage-btn">重新生成</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== PRICING ==================== -->
+<div class="page" id="page-pricing">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo" onclick="go('landing')"><span class="icon">AI</span> AI Dev Studio</div>
+      <div class="topbar-nav">
+        <span class="topbar-nav-item" onclick="go('dashboard')">工作台</span>
+        <span class="topbar-nav-item" onclick="go('marketplace')">模板市场</span>
+        <span class="topbar-nav-item" onclick="go('publish')">发布管理</span>
+        <span class="topbar-nav-item" onclick="go('settings')">设置</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-avatar" onclick="go('settings')">TD</div>
+    </div>
+  </div>
+
+  <div style="text-align:center;padding:48px 24px 24px;">
+    <h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">选择适合你的套餐</h1>
+    <p style="font-size:15px;color:var(--text-secondary);">从免费开始，随需升级</p>
+  </div>
+
+  <div class="pricing-grid">
+    <div class="pricing-card">
+      <div class="pricing-name">免费版</div>
+      <div class="pricing-price">¥0</div>
+      <div class="pricing-period">永久免费</div>
+      <ul class="pricing-features">
+        <li>每月 3 个项目</li>
+        <li>基础 AI 算力</li>
+        <li>内置云托管 (子域名)</li>
+        <li>社区支持</li>
+      </ul>
+      <button class="pricing-btn" onclick="go('settings')">当前套餐</button>
+    </div>
+
+    <div class="pricing-card featured">
+      <div class="pricing-name">专业版</div>
+      <div class="pricing-price">¥99</div>
+      <div class="pricing-period">/月</div>
+      <ul class="pricing-features">
+        <li>无限项目</li>
+        <li>高级 AI 算力</li>
+        <li>自定义域名绑定</li>
+        <li>代码导出</li>
+        <li>CDN 加速</li>
+        <li>优先支持</li>
+      </ul>
+      <button class="pricing-btn primary" onclick="go('settings')">升级到专业版</button>
+    </div>
+
+    <div class="pricing-card">
+      <div class="pricing-name">团队版</div>
+      <div class="pricing-price">¥299</div>
+      <div class="pricing-period">/月</div>
+      <ul class="pricing-features">
+        <li>专业版全部功能</li>
+        <li>最多 10 人协作</li>
+        <li>权限管理</li>
+        <li>项目模板共享</li>
+        <li>团队数据分析</li>
+      </ul>
+      <button class="pricing-btn" onclick="go('settings')">升级到团队版</button>
+    </div>
+
+    <div class="pricing-card">
+      <div class="pricing-name">企业版</div>
+      <div class="pricing-price">定制</div>
+      <div class="pricing-period">联系销售</div>
+      <ul class="pricing-features">
+        <li>团队版全部功能</li>
+        <li>不限成员数</li>
+        <li>私有化部署</li>
+        <li>定制模型训练</li>
+        <li>SLA 保障</li>
+        <li>专属客户经理</li>
+      </ul>
+      <button class="pricing-btn" onclick="go('settings')">联系销售</button>
+    </div>
+  </div>
+
+  <div style="text-align:center;padding:32px;">
+    <p style="font-size:13px;color:var(--text-tertiary);">所有套餐均消耗 AI 算力点数。不同操作消耗不同点数（需求拆解 1 点，代码生成 5 点等）。免费版每月赠送 500 点，付费版可购买额外点数。</p>
+  </div>
+</div>
+
+<script>
+function go(pageId) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + pageId).classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function switchPreview(tab) {
+  document.querySelectorAll('.preview-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.preview-tab[data-tab="${tab}"]`).classList.add('active');
+  document.querySelectorAll('.preview-content').forEach(c => c.style.display = 'none');
+  document.getElementById('preview-' + tab).style.display = 'block';
+}
+
+// Tab switching for dashboard
+document.querySelectorAll('.section-tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    this.parentElement.querySelectorAll('.section-tab').forEach(t => t.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// Filter chip switching
+document.querySelectorAll('.filter-chip').forEach(chip => {
+  chip.addEventListener('click', function() {
+    const group = this.closest('.filter-group');
+    group.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+
+// Topbar nav switching
+document.querySelectorAll('.topbar-nav-item').forEach(item => {
+  item.addEventListener('click', function() {
+    document.querySelectorAll('.topbar-nav-item').forEach(i => i.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
