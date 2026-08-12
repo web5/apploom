@@ -2,6 +2,24 @@
  * LLM Provider 配置。OpenAI 兼容接口，当前支持 DeepSeek 与腾讯混元。
  * 走 OpenAI 兼容的 /chat/completions，所以新增 provider 只需补 baseURL/model。
  */
+import { config as loadEnv } from 'dotenv';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+// 从 cwd 向上查找 .env 并加载（最多 6 级），让 CLI/api 反复调试时不用手动 export
+{
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i++) {
+    const candidate = resolve(dir, '.env');
+    if (existsSync(candidate)) {
+      loadEnv({ path: candidate });
+      break;
+    }
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+}
 
 export interface LLMProviderConfig {
   /** OpenAI 兼容的 base URL（不含末尾 /chat/completions） */
