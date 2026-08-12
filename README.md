@@ -16,7 +16,7 @@ AppLoom 是一个 AI 研发平台，也是 AI Agent 开发的实战项目。核�
 | **管理端 · Admin** | `/admin/*` | 维护 AI 能力本身：提示词调试、MCP/记忆/Skills 配置、Agent 与 Schema 契约维护 |
 
 - 当前 `/admin/debug`：提示词调试工作台（流式 + Zod 校验 + 调试摘要）
-- 当前 `/studio`：2 阶段流水线（需求拆解 → 方案设计），「下一步」推进
+- 当前 `/studio`：4 阶段流水线（需求拆解 → 方案设计 → 代码生成 → 部署发布），「下一步」推进
 
 ## 4 个核心 Agent（全部 Product 类，不预设技术栈）
 
@@ -24,8 +24,8 @@ AppLoom 是一个 AI 研发平台，也是 AI Agent 开发的实战项目。核�
 |-------|---------|-----------|------|
 | 需求分析 | 第 1 环 | 一句话 → 结构化 PRD | ✅ |
 | 架构设计 | 第 2 环 | PRD → DesignDocument（技术栈决策者） | ✅ |
-| 代码生成 | 第 3 环 | Design → 多文件代码 | ⏳ W6 |
-| 部署发布 | 第 4 环 | 代码 → 上线 URL | ⏳ W7 |
+| 代码生成 | 第 3 环 | Design → 多文件代码（files + dependencies + runCommand） | ✅ |
+| 部署发布 | 第 4 环 | Codegen → 部署方案（URL + 构建日志） | ✅ |
 
 > 设计原则：全局 System 基座只注入研发流程方法论，**不预设任何技术栈**；技术栈由架构设计 Agent 按场景决策。详见 `docs/notes/prompt/`。
 
@@ -92,7 +92,8 @@ pnpm --filter @apploom/shared build && pnpm debug:prd "一句话需求"
 
 - **W1-W2** LLM 基础 + API 实战（✅ 已完成 Monorepo + LLM 网关）
 - **W3-W4** 结构化输出 + 单 Agent 闭环（✅ 需求分析 Agent + 调试工作台）
-- **W5-W7** 多 Agent 流水线（✅ 方案设计 Agent；⏳ 4-Agent + 异步化）
+- **W5-W6** 多 Agent 流水线（✅ 4-Agent 全部实现：需求 → 设计 → 代码生成 → 部署发布）
+- **W7** Agent 工程化（⏳ 异步任务队列、逐步确认、失败重试）
 - **W8-W9** 记忆/RAG + 评估调优
 - **W10** Agent Runtime + 增量修改
 

@@ -96,3 +96,84 @@ body {
 .prd li { font-size: 13px; line-height: 1.7; color: #374151; }
 .prd code { font-family: 'SF Mono', monospace; font-size: 12px; color: #6b7280; }
 .assume { color: #92400e; }
+
+/* === Agent 切换 Tab === */
+.agent-tabs { display: flex; gap: 0; padding: 0 18px; border-bottom: 1px solid #e5e7eb; background: #fff; }
+.agent-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border: none; background: none; cursor: pointer; font-size: 12px; color: #9ca3af; border-bottom: 2px solid transparent; }
+.agent-tab:hover { color: #6b7280; }
+.agent-tab.active { color: #3b82f6; border-bottom-color: #3b82f6; }
+.tab-icon { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 12px; background: #f0f1f3; color: #6b7280; }
+.agent-tab.active .tab-icon { background: #eff6ff; color: #3b82f6; }
+.tab-label { font-size: 11px; }
+
+/* === 带入上游输出按钮 === */
+.btn-bring { width: 100%; background: #f0f7ff; color: #3b82f6; border: 1px dashed #93c5fd; border-radius: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer; }
+.btn-bring:hover { background: #eff6ff; }
+.btn-bring:disabled { color: #d1d5db; border-color: #e5e7eb; background: #f7f8fa; cursor: not-allowed; }
+
+/* === JSON 输入框 === */
+.json-input { min-height: 160px; font-family: 'SF Mono', monospace; font-size: 12px; }
+
+/* === 流水线活跃阶段 === */
+.stage { padding: 14px 16px; border-radius: 10px; margin-bottom: 8px; }
+.stage-active { background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.06); border: 1px solid #e5e7eb; }
+.pipeline { display: flex; flex-direction: column; gap: 4px; }
+
+/* === Design 视图：数据模型 === */
+.data-model { margin-bottom: 12px; }
+.data-model > b { display: block; font-size: 13px; margin-bottom: 4px; }
+
+/* === Design 视图：HTTP 方法标签 === */
+.method { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.method-GET { background: #ecfdf5; color: #10b981; }
+.method-POST { background: #eff6ff; color: #3b82f6; }
+.method-PUT { background: #fef3c7; color: #f59e0b; }
+.method-DELETE { background: #fef2f2; color: #ef4444; }
+
+/* === Codegen 视图：文件浏览器 === */
+.code-block { background: #1e1e2e; color: #a6e3a1; padding: 10px 14px; border-radius: 8px; font-family: 'SF Mono', monospace; font-size: 13px; margin: 0; overflow-x: auto; }
+.file-browser { display: flex; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.file-tree { width: 180px; flex-shrink: 0; max-height: 400px; overflow-y: auto; border-right: 1px solid #e5e7eb; background: #f7f8fa; }
+.file-item { display: block; width: 100%; text-align: left; padding: 6px 10px; border: none; background: none; font-size: 12px; font-family: 'SF Mono', monospace; color: #6b7280; cursor: pointer; }
+.file-item:hover { background: #eff6ff; color: #3b82f6; }
+.file-item.active { background: #eff6ff; color: #3b82f6; font-weight: 600; border-left: 3px solid #3b82f6; }
+.file-content { flex: 1; margin: 0; padding: 10px 14px; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.6; overflow: auto; max-height: 400px; white-space: pre-wrap; word-break: break-all; color: #374151; background: #fff; }
+
+/* === Deploy 视图 === */
+.deploy-status { display: flex; align-items: center; gap: 12px; }
+.deploy-badge { font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 999px; }
+.deploy-success { background: #ecfdf5; color: #10b981; }
+.deploy-failed { background: #fef2f2; color: #ef4444; }
+.deploy-target { font-size: 13px; color: #6b7280; }
+.deploy-url { color: #3b82f6; text-decoration: none; font-size: 13px; word-break: break-all; }
+.deploy-url:hover { text-decoration: underline; }
+.build-log { background: #1e1e2e; color: #cdd6f4; padding: 12px 14px; border-radius: 8px; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }
+
+/* === Studio Stage Loading 交互（从 studio 内联 style 迁出，确保 mounted 模式下也能生效） === */
+.studio-stage-loading { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; padding: 12px; background: #f8faff; border: 1px solid #dbeafe; border-radius: 8px; }
+.studio-loading-top { display: flex; gap: 12px; align-items: flex-start; }
+.studio-spinner { width: 18px; height: 18px; border: 2px solid #bfdbfe; border-top-color: #3b82f6; border-radius: 50%; animation: studio-spin 0.8s linear infinite; flex-shrink: 0; margin-top: 2px; }
+@keyframes studio-spin { to { transform: rotate(360deg); } }
+.studio-loading-steps { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.studio-step { display: flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.4; transition: all 0.3s ease; }
+.studio-step-icon { width: 14px; height: 14px; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+.studio-step-pending { color: #9ca3af; }
+.studio-step-pending .studio-step-icon { color: #d1d5db; }
+.studio-step-active { color: #3b82f6; font-weight: 500; }
+.studio-step-active .studio-step-icon { color: #3b82f6; animation: studio-pulse 1.2s ease-in-out infinite; }
+@keyframes studio-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.4); } }
+.studio-step-done { color: #10b981; }
+.studio-step-done .studio-step-icon { color: #10b981; }
+.studio-loading-meta { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; min-width: 80px; }
+.studio-char-count { font-size: 10px; color: #6b7280; font-family: 'SF Mono', monospace; }
+.studio-progress-bar { width: 80px; height: 4px; background: #e5e7eb; border-radius: 2px; overflow: hidden; }
+.studio-progress-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #60a5fa); border-radius: 2px; transition: width 0.4s ease; }
+.studio-streaming-preview { font-family: 'SF Mono', monospace; font-size: 10px; line-height: 1.5; color: #6b7280; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px; max-height: 60px; overflow: hidden; word-break: break-all; }
+.studio-sp-label { color: #3b82f6; font-weight: 600; }
+.studio-sp-text { color: #9ca3af; }
+
+/* === Studio 右侧流式光标 === */
+.studio-pv-streaming { display: inline-flex; align-items: center; gap: 5px; color: #3b82f6; font-weight: 500; }
+.studio-dot-pulse { width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; animation: studio-pulse 1.2s ease-in-out infinite; }
+.studio-cursor-blink { display: inline-block; color: #3b82f6; animation: studio-blink 1s step-end infinite; }
+@keyframes studio-blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
