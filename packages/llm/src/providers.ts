@@ -27,7 +27,7 @@ export function resolveProvider(name: ProviderName, apiKey: string): LLMProvider
       };
     case 'hunyuan':
       return {
-        baseURL: process.env.HUNYUAN_BASE_URL ?? 'https://api.hunyuan.cloud.tencent.com/v1',
+        baseURL: process.env.HUNYUAN_BASE_URL ?? 'https://tokenhub.tencentmaas.com/v1',
         apiKey,
         // 用户指定的混元模型：hy3（可用 HUNYUAN_MODEL 覆盖）
         model: process.env.HUNYUAN_MODEL ?? 'hy3',
