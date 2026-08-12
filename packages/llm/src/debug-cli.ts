@@ -3,15 +3,15 @@
  * 提示词调试闭环入口：几句话需求 → 结构化 PRD
  *
  * 用法：
- *   pnpm --filter @aidp/llm debug:prd "做一个团队待办事项应用"
- *   pnpm --filter @aidp/llm debug:prd ./req.txt        # 从文件读需求
- *   echo "做一个番茄钟" | pnpm --filter @aidp/llm debug:prd   # 从 stdin
+ *   pnpm --filter @apploom/llm debug:prd "做一个团队待办事项应用"
+ *   pnpm --filter @apploom/llm debug:prd ./req.txt        # 从文件读需求
+ *   echo "做一个番茄钟" | pnpm --filter @apploom/llm debug:prd   # 从 stdin
  *
  * 环境变量：LLM_PROVIDER(deepseek|hunyuan) + 对应 API key
  *   DEEPSEEK_API_KEY=xxx 或 HUNYUAN_API_KEY=xxx
  */
 import { readFileSync } from 'node:fs';
-import { PRDSchema, PRD_JSON_SCHEMA, REQUIREMENT_ANALYST_SYSTEM_PROMPT } from '@aidp/shared';
+import { PRDSchema, PRD_JSON_SCHEMA, REQUIREMENT_ANALYST_SYSTEM_PROMPT } from '@apploom/shared';
 import { loadProviderFromEnv } from './providers';
 import { chat } from './gateway';
 

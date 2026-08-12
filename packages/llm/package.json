@@ -1,5 +1,5 @@
 {
-  "name": "@aidp/llm",
+  "name": "@apploom/llm",
   "version": "0.1.0",
   "private": true,
   "main": "dist/index.js",
@@ -10,7 +10,7 @@
     "debug:prd": "tsx src/debug-cli.ts"
   },
   "dependencies": {
-    "@aidp/shared": "workspace:*",
+    "@apploom/shared": "workspace:*",
     "dotenv": "^16.4.5",
     "zod": "^3.23.8"
   },

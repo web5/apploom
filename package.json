@@ -1,16 +1,16 @@
 {
-  "name": "ai-dev-platform",
+  "name": "apploom",
   "version": "0.1.0",
   "private": true,
-  "description": "AI 研发平台：输入一句话，AI 自动完成需求拆解→方案设计→代码生成→发布上线",
+  "description": "AppLoom — weave your idea into an app. 输入一句话，AI 多 Agent 流水线自动完成需求拆解→方案设计→代码生成→发布上线",
   "scripts": {
     "dev": "pnpm --parallel -r dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
-    "db:generate": "pnpm --filter @aidp/database db:generate",
-    "db:migrate": "pnpm --filter @aidp/database db:migrate",
-    "db:studio": "pnpm --filter @aidp/database db:studio",
-    "debug:prd": "pnpm --filter @aidp/llm debug:prd"
+    "db:generate": "pnpm --filter @apploom/database db:generate",
+    "db:migrate": "pnpm --filter @apploom/database db:migrate",
+    "db:studio": "pnpm --filter @apploom/database db:studio",
+    "debug:prd": "pnpm --filter @apploom/llm debug:prd"
   },
   "engines": {
     "node": ">=20"

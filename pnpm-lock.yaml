@@ -10,13 +10,13 @@ importers:
 
   apps/api:
     dependencies:
-      '@aidp/database':
+      '@apploom/database':
         specifier: workspace:^
         version: link:../../packages/database
-      '@aidp/llm':
+      '@apploom/llm':
         specifier: workspace:^
         version: link:../../packages/llm
-      '@aidp/shared':
+      '@apploom/shared':
         specifier: workspace:^
         version: link:../../packages/shared
       '@nestjs/common':
@@ -157,7 +157,7 @@ importers:
 
   packages/llm:
     dependencies:
-      '@aidp/shared':
+      '@apploom/shared':
         specifier: workspace:*
         version: link:../shared
       dotenv:

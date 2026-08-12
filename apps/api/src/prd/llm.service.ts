@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { loadProviderFromEnv, chat } from '@aidp/llm';
+import { loadProviderFromEnv, chat } from '@apploom/llm';
 import {
   PRDSchema,
   PRD_JSON_SCHEMA,
   REQUIREMENT_ANALYST_SYSTEM_PROMPT,
-} from '@aidp/shared';
+  DesignSchema,
+  DESIGN_JSON_SCHEMA,
+  ARCHITECT_SYSTEM_PROMPT,
+} from '@apploom/shared';
 
 /** 从模型输出里抽取 JSON（兼容 markdown 代码块 / 前后多余文字） */
 function extractJson(text: string): string {
@@ -71,4 +74,58 @@ export class LlmService {
       return { raw, error: (e as Error).message };
     }
   }
+
+  /**
+   * 架构设计 Agent：上游 PRD → 技术方案 DesignDocument
+   * 本 Agent 是技术栈的决策者（全局基座不预设栈，由它按场景选）。
+   */
+  async generateDesign(
+    prd: unknown,
+    onToken: (token: string) => void,
+  ): Promise<DesignResult> {
+    const provider = loadProviderFromEnv();
+    const result = await chat(provider, {
+      system: ARCHITECT_SYSTEM_PROMPT,
+      user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}`,
+      temperature: 0.5,
+      jsonSchema: { name: 'DesignDocument', schema: DESIGN_JSON_SCHEMA as unknown as Record<string, unknown> },
+      stream: true,
+      onToken,
+    });
+
+    const raw = result.content;
+    try {
+      const design = DesignSchema.parse(JSON.parse(extractJson(raw)));
+      const warnings: string[] = [];
+      if (design.pageTree.length > 8) warnings.push(`页面 ${design.pageTree.length} 个，超过 MVP 上限 8`);
+      if (design.apis.length > 15) warnings.push(`API ${design.apis.length} 个，超过 MVP 上限 15`);
+      if (design.dataModels.length > 6) warnings.push(`数据实体 ${design.dataModels.length} 个，超过 MVP 上限 6`);
+      return {
+        raw,
+        design,
+        summary: {
+          techStack: design.techStack,
+          pages: design.pageTree.length,
+          entities: design.dataModels.length,
+          apis: design.apis.length,
+          warnings,
+        },
+      };
+    } catch (e) {
+      return { raw, error: (e as Error).message };
+    }
+  }
+}
+
+export interface DesignResult {
+  raw: string;
+  design?: unknown;
+  error?: string;
+  summary?: {
+    techStack: string[];
+    pages: number;
+    entities: number;
+    apis: number;
+    warnings: string[];
+  };
 }

@@ -38,14 +38,7 @@ export interface AgentResult {
  */
 export type PRDDocument = PRD;
 
-/** 架构设计 Agent 产出：技术方案 */
-export interface DesignDocument {
-  techStack: string[];
-  architecture: string;
-  pageTree: Array<{ path: string; component: string; description: string }>;
-  dataModels: Array<{ name: string; fields: Array<{ name: string; type: string }> }>;
-  apis: Array<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; description: string }>;
-}
+/** 架构设计 Agent 产出：技术方案 —— 见 schemas/design.ts（单一真相源） */
 
 /** 代码生成 Agent 产出：文件集合 */
 export interface CodeFile {

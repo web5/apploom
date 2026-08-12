@@ -20,9 +20,9 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
-    "@aidp/database": "workspace:^",
-    "@aidp/llm": "workspace:^",
-    "@aidp/shared": "workspace:^",
+    "@apploom/database": "workspace:^",
+    "@apploom/llm": "workspace:^",
+    "@apploom/shared": "workspace:^",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",

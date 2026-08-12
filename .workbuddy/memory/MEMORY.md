@@ -15,6 +15,13 @@
 - 目录 `docs/notes/prompt/`：README(索引) + 01-system-base + 02-agent-taxonomy + 03-prompt-layers + agents/(4个Agent草稿)
 - 后续写 Agent Prompt / 加新 Agent 时，先同步这里；JSON Schema 契约落地在 `packages/shared`。
 
+### 系统双入口架构（重要，2026-08-12 用户敲定）
+系统分两个入口/门户，职责严格分离：
+- **管理端（Admin Portal）**：管理和维护 AI 能力本身。包含：提示词调试、MCP 配置、记忆管理、Skills 配置与调试、Agent/Schema 契约维护。当前 `/debug` 属于此端（提示词调试工作台）。
+- **生产端（Production Portal）**：用 AI 能力做真实研发作业。即 4-Agent 流水线（需求→方案→代码→部署），含"下一步"推进、项目版本、模板市场、发布管理。
+- 关键区分：「下一步 → 方案设计」属于**生产端**，不在调试页；调试页只管调好单个 Agent 的 Prompt/Schema，调好的能力被生产端消费。
+- 路由建议：管理端 `/admin/*`，生产端 `/studio/*`（或根 `/` 进工作台）。
+
 ## 技术栈决策
 - 平台本身：TypeScript（Next.js 14 + NestJS 11 + Prisma + PostgreSQL）
 - LLM 网关：OpenAI 兼容适配层（DeepSeek + 混元 hy3），多 provider
