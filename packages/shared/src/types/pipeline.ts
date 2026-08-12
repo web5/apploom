@@ -2,6 +2,7 @@
  * Pipeline 流水线核心类型
  * 这是 AI 研发平台的"心脏"——描述 AI Pipeline 各环节的产物与流转
  */
+import type { PRD } from '../schemas/prd';
 
 /** Pipeline 阶段（4 + 1：安全审查贯穿） */
 export type PipelineStage = 'REQUIREMENT' | 'DESIGN' | 'CODEGEN' | 'SECURITY' | 'DEPLOY';
@@ -31,24 +32,11 @@ export interface AgentResult {
   error?: string;
 }
 
-/** 需求分析 Agent 产出：结构化 PRD */
-export interface PRDDocument {
-  productName: string;
-  productOverview: string;
-  targetUsers: string[];
-  coreValue: string;
-  features: Array<{
-    id: string;
-    name: string;
-    priority: 'P0' | 'P1' | 'P2';
-    description: string;
-  }>;
-  pages: string[];
-  dataEntities: Array<{
-    name: string;
-    fields: Array<{ name: string; type: string; description: string }>;
-  }>;
-}
+/**
+ * 需求分析 Agent 产出：结构化 PRD
+ * 统一复用 schemas/prd.ts 的 PRD 类型，避免两处定义漂移。
+ */
+export type PRDDocument = PRD;
 
 /** 架构设计 Agent 产出：技术方案 */
 export interface DesignDocument {

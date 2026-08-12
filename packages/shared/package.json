@@ -8,6 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "lint": "echo 'noop'"
   },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
   "devDependencies": {
     "typescript": "^5.5.0"
   }
