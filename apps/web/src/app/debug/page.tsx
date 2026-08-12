@@ -40,6 +40,7 @@ const PRIORITY_COLOR: Record<Priority, string> = {
 
 export default function DebugPage() {
   const [requirement, setRequirement] = useState('做一个团队待办事项应用，支持任务指派和看板');
+  const [followUp, setFollowUp] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [raw, setRaw] = useState('');
   const [prd, setPrd] = useState<PRD | null>(null);
@@ -47,7 +48,7 @@ export default function DebugPage() {
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
-  async function send() {
+  async function send(appendFollowUp: boolean) {
     if (!requirement.trim() || status === 'running') return;
     setStatus('running');
     setRaw('');
@@ -56,11 +57,14 @@ export default function DebugPage() {
     setError('');
     const ac = new AbortController();
     abortRef.current = ac;
+    const finalRequirement = appendFollowUp && followUp.trim()
+      ? `${requirement}\n\n补充指令：${followUp.trim()}`
+      : requirement;
     try {
       const res = await fetch('/api/prd/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requirement }),
+        body: JSON.stringify({ requirement: finalRequirement }),
         signal: ac.signal,
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -115,6 +119,25 @@ export default function DebugPage() {
     setStatus((s) => (s === 'running' ? 'idle' : s));
   }
 
+  async function copyPrdJson() {
+    if (!prd) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(prd, null, 2));
+      setError('');
+      // 简单反馈：用 error 字段反向用作临时提示有点脏，这里用一个独立的小状态更干净
+      // 为了零额外状态，用一次临时 setStatus 不合适；用 prompt() 也不合适——直接写一个本地变量
+      // 改为：用 alert 太重。最简：在按钮上临时改 label。
+      const btn = document.activeElement as HTMLButtonElement | null;
+      if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = '✓ 已复制';
+        setTimeout(() => { btn.textContent = orig; }, 1200);
+      }
+    } catch {
+      setError('复制失败：浏览器未授予剪贴板权限');
+    }
+  }
+
   const stageStatus =
     status === 'running' ? 'running' : status === 'done' && prd ? 'done' : status === 'error' ? 'failed' : 'pending';
   const stageLabel = { pending: '待执行', running: '生成中', done: '已完成', failed: '失败' }[stageStatus];
@@ -137,7 +160,7 @@ export default function DebugPage() {
             value={requirement}
             onChange={(e) => setRequirement(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send(true);
             }}
           />
           <div className="shortcuts">
@@ -147,6 +170,13 @@ export default function DebugPage() {
               </button>
             ))}
           </div>
+          <label className="follow-label">补充指令（可选，会拼到需求后）</label>
+          <textarea
+            className="req-input follow-input"
+            placeholder='例如："减少 P0 到 3 个" / "只做 Web 端，暂不做小程序"'
+            value={followUp}
+            onChange={(e) => setFollowUp(e.target.value)}
+          />
         </div>
         <footer className="send-bar">
           {status === 'running' ? (
@@ -154,9 +184,26 @@ export default function DebugPage() {
               停止
             </button>
           ) : (
-            <button className="btn btn-send" onClick={send} disabled={!requirement.trim()}>
-              生成 PRD →
-            </button>
+            <>
+              <button
+                className="btn btn-send"
+                onClick={() => send(true)}
+                disabled={!requirement.trim()}
+                title={followUp.trim() ? '会把补充指令拼到需求后' : ''}
+              >
+                {status === 'idle' ? '生成 PRD →' : '重新生成（带修改）→'}
+              </button>
+              {status === 'done' && (
+                <button
+                  className="btn btn-rerun"
+                  onClick={() => send(false)}
+                  disabled={!requirement.trim()}
+                  title="忽略补充指令，用原始输入再跑一次（测提示词稳定性）"
+                >
+                  🔄 纯重跑
+                </button>
+              )}
+            </>
           )}
           <span className="meta">⌘/Ctrl + Enter 发送</span>
         </footer>
@@ -182,6 +229,9 @@ export default function DebugPage() {
                 需求分析 Agent 把一句话拆解为结构化 PRD（功能 / 用户故事 / 页面 / 实体 / 假设）。
               </p>
               {status === 'running' && <div className="streaming">已接收 {raw.length} 字符…</div>}
+              {(status === 'done' || status === 'error') && !summary && raw && (
+                <div className="streaming">本次输出未通过 Zod 校验，查看右侧原始输出。</div>
+              )}
               {summary && (
                 <div className="stage-summary">
                   <div className="summary-row">
@@ -195,6 +245,16 @@ export default function DebugPage() {
                   ))}
                 </div>
               )}
+              {(status === 'done' || status === 'error') && (
+                <div className="stage-actions">
+                  <button className="btn btn-rerun-sm" onClick={() => send(true)}>
+                    {followUp.trim() ? '按修改重生成' : '🔄 重新生成'}
+                  </button>
+                  <button className="btn btn-rerun-sm" onClick={() => send(false)} title="忽略补充指令，原输入再跑（测稳定性）">
+                    🔄 纯重跑
+                  </button>
+                </div>
+              )}
               {error && <div className="err-box">⚠ {error}</div>}
             </div>
           </div>
@@ -205,7 +265,13 @@ export default function DebugPage() {
       <aside className="ws-panel ws-right">
         <header className="ws-header">
           <span>📄 PRD 预览</span>
-          <span className="ws-sub">{prd ? '结构化' : status === 'running' ? '流式原始输出' : '待生成'}</span>
+          <span className="ws-sub">
+            {prd ? (
+              <button className="btn btn-copy" onClick={copyPrdJson}>📋 复制 JSON</button>
+            ) : (
+              <span>{status === 'running' ? '流式原始输出' : '待生成'}</span>
+            )}
+          </span>
         </header>
         <div className="preview">
           {prd ? (
@@ -291,68 +357,6 @@ export default function DebugPage() {
           )}
         </div>
       </aside>
-
-      <style>{`
-        .workspace { display:flex; height:100vh; overflow:hidden; background:#f7f8fa; color:#1a1a2e; font-family: -apple-system, 'PingFang SC', sans-serif; }
-        .ws-panel { display:flex; flex-direction:column; overflow:hidden; background:#fff; }
-        .ws-left { width:340px; border-right:1px solid #e5e7eb; flex-shrink:0; }
-        .ws-mid { flex:1; background:#f7f8fa; min-width:0; }
-        .ws-right { width:420px; border-left:1px solid #e5e7eb; flex-shrink:0; }
-        .ws-header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid #e5e7eb; font-size:14px; font-weight:600; background:#fff; }
-        .ws-sub { font-size:12px; color:#9ca3af; font-weight:400; }
-        .chat-area { flex:1; overflow-y:auto; padding:16px 18px; display:flex; flex-direction:column; gap:12px; }
-        .hint { font-size:12px; color:#6b7280; line-height:1.6; margin:0; }
-        .req-input { width:100%; min-height:120px; resize:vertical; padding:10px 12px; border:1px solid #e5e7eb; border-radius:8px; font-size:14px; line-height:1.5; font-family:inherit; box-sizing:border-box; }
-        .req-input:focus { outline:none; border-color:#3b82f6; box-shadow:0 0 0 3px #eff6ff; }
-        .shortcuts { display:flex; flex-wrap:wrap; gap:6px; }
-        .chip { font-size:12px; padding:4px 10px; border:1px solid #e5e7eb; border-radius:999px; background:#fff; cursor:pointer; color:#6b7280; }
-        .chip:hover { border-color:#93c5fd; color:#3b82f6; }
-        .send-bar { padding:12px 18px; border-top:1px solid #e5e7eb; display:flex; align-items:center; gap:12px; }
-        .btn { border:none; border-radius:8px; padding:8px 16px; font-size:14px; cursor:pointer; }
-        .btn-send { background:#3b82f6; color:#fff; }
-        .btn-send:hover { background:#2563eb; }
-        .btn-send:disabled { background:#d1d5db; cursor:not-allowed; }
-        .btn-stop { background:#ef4444; color:#fff; }
-        .meta { font-size:11px; color:#9ca3af; }
-        .pipeline { flex:1; overflow-y:auto; padding:20px; }
-        .stage { display:flex; gap:14px; }
-        .stage-icon { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:600; flex-shrink:0; background:#f0f1f3; color:#6b7280; }
-        .stage-running .stage-icon { background:#eff6ff; color:#3b82f6; animation:spin 1.2s linear infinite; }
-        .stage-done .stage-icon { background:#ecfdf5; color:#10b981; }
-        .stage-failed .stage-icon { background:#fef2f2; color:#ef4444; }
-        @keyframes spin { to { transform:rotate(360deg); } }
-        .stage-body { flex:1; min-width:0; }
-        .stage-head { display:flex; align-items:center; gap:10px; }
-        .stage-name { font-weight:600; font-size:14px; }
-        .badge { font-size:11px; padding:2px 8px; border-radius:999px; }
-        .badge-pending { background:#f0f1f3; color:#6b7280; }
-        .badge-running { background:#eff6ff; color:#3b82f6; }
-        .badge-done { background:#ecfdf5; color:#10b981; }
-        .badge-failed { background:#fef2f2; color:#ef4444; }
-        .stage-desc { font-size:13px; color:#6b7280; margin:6px 0 0; line-height:1.6; }
-        .streaming { margin-top:8px; font-size:12px; color:#3b82f6; }
-        .stage-summary { margin-top:10px; }
-        .summary-row { display:flex; gap:16px; font-size:13px; color:#6b7280; flex-wrap:wrap; }
-        .summary-row b { color:#1a1a2e; }
-        .warn { margin-top:6px; font-size:12px; color:#f59e0b; }
-        .err-box { margin-top:8px; font-size:12px; color:#ef4444; background:#fef2f2; border:1px solid #fca5a5; border-radius:6px; padding:8px 10px; word-break:break-all; }
-        .preview { flex:1; overflow-y:auto; padding:16px 18px; }
-        .placeholder { color:#9ca3af; font-size:13px; line-height:1.7; }
-        .raw { font-family:'SF Mono', monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; color:#374151; margin:0; line-height:1.6; }
-        .prd section { margin-bottom:18px; }
-        .prd h4 { margin:0 0 8px; font-size:13px; font-weight:600; color:#1a1a2e; }
-        .prd p { margin:0; font-size:13px; line-height:1.7; color:#374151; }
-        .tags { display:flex; flex-wrap:wrap; gap:6px; }
-        .tag { font-size:12px; padding:3px 8px; background:#f0f1f3; border-radius:6px; color:#6b7280; }
-        .ftable { width:100%; border-collapse:collapse; font-size:12px; }
-        .ftable th, .ftable td { border:1px solid #e5e7eb; padding:6px 8px; text-align:left; }
-        .ftable th { background:#f7f8fa; font-weight:600; }
-        .prio { display:inline-block; padding:1px 6px; border:1px solid; border-radius:4px; font-size:11px; font-weight:600; }
-        .prd ul { margin:0; padding-left:18px; }
-        .prd li { font-size:13px; line-height:1.7; color:#374151; }
-        .prd code { font-family:'SF Mono', monospace; font-size:12px; color:#6b7280; }
-        .assume { color:#92400e; }
-      `}</style>
     </div>
   );
 }
