@@ -349,7 +349,7 @@ function StudioPageInner() {
   const previewLabel = deploy ? 'DeployDocument' : codegen ? 'CodegenDocument' : design ? 'DesignDocument' : prd ? 'PRD' : '待生成';
   const showStream = activeRunning;
 
-  /** 对话式修改输入框（done / waiting_confirm 状态通用） */
+  /** 对话式修改输入框（done / waiting_confirm / error 状态通用） */
   const repairEntry = (stage: Stage) => (
     <div className="repair-box">
       <textarea

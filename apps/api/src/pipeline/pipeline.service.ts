@@ -383,7 +383,6 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error };
       }
       case 'deploy': {
-        // W7+1: 本地真部署。不再让 LLM 描述，直接真实执行 codegen 产物。
         const codegen = doc.stages.codegen.result as {
           files: { path: string; content: string }[];
           dependencies: string[];
@@ -392,12 +391,35 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         if (!codegen?.files?.length) {
           return { raw: '', error: '上游 codegen 产物为空，无法部署' };
         }
-        const out = await this.deploySvc.deploy(docId, codegen, onToken);
-        // 不通过 error 抛出：失败时让 processStage 走 store.update 分支保存 raw/result
+
+        // 1) LLM 决策部署方案（target: local / cloud / git），repair 反馈也走 LLM
+        const r = await this.llm.generateDeploy(codegen, onToken, repair);
+        if (r.error) return { raw: r.raw, error: r.error };
+        const deploy = r.deploy as {
+          target: 'local' | 'cloud' | 'git';
+          url: string;
+          repoUrl: string;
+          buildLog: string;
+          status: 'success' | 'failed';
+        } | undefined;
+        if (!deploy) return { raw: r.raw, error: '部署方案解析失败' };
+
+        // 2) local 目标 → LocalDeployService 真实执行，用真实结果覆盖 LLM 的占位值
+        if (deploy.target === 'local') {
+          const out = await this.deploySvc.deploy(docId, codegen, onToken);
+          const merged = { ...deploy, url: out.url, buildLog: out.buildLog, status: out.status };
+          return {
+            raw: out.buildLog,
+            result: merged,
+            summary: { target: 'local', url: out.url, status: out.status, warnings: [] },
+          };
+        }
+
+        // 3) cloud / git → 保留 LLM 描述（未来接入对应 executor）
         return {
-          raw: out.buildLog,
-          result: out,
-          summary: { target: out.target, url: out.url, status: out.status, warnings: [] },
+          raw: r.raw,
+          result: deploy,
+          summary: { target: deploy.target, url: deploy.url, status: deploy.status, warnings: r.summary?.warnings ?? [] },
         };
       }
     }

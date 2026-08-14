@@ -199,17 +199,18 @@ export class LlmService {
   }
 
   /**
-   * 部署发布 Agent：上游 CodegenDocument → 部署方案
-   * 产出部署 URL / Git 仓库链接 + 构建日志，非真正执行部署。
+   * 部署发布 Agent：上游 CodegenDocument → 部署方案（决策 target）
+   * 产出 DeployDocument，后端根据 target 分发 executor 落地（local 真执行）。
    */
   async generateDeploy(
     codegen: unknown,
     onToken: (token: string) => void,
+    repair?: RepairContext,
   ): Promise<DeployResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       system: DEPLOYER_SYSTEM_PROMPT,
-      user: `上游 CodegenDocument：\n${JSON.stringify(codegen, null, 2)}`,
+      user: `上游 CodegenDocument：\n${JSON.stringify(codegen, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,
       maxTokens: 4096,
       jsonSchema: { name: 'DeployDocument', schema: DEPLOY_JSON_SCHEMA as unknown as Record<string, unknown> },
