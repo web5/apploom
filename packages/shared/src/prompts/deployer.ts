@@ -27,11 +27,13 @@ export const DEPLOYER_SYSTEM_PROMPT = `# 角色
   "url": "可访问的地址（local 为本地 URL 占位，最终由后端执行后覆盖）",
   "repoUrl": "Git 仓库链接（导出时，无则为空串）",
   "buildLog": "构建日志摘要，含关键步骤",
-  "status": "success | failed"
+  "status": "success | failed",
+  "port": 5173
 }
 
 # 约束
 - 默认优先选 local：本地开发调试最直接，能真实启动服务
+- **port 是 local 目标时 dev server 要监听的端口**（vite 默认 5173、next 默认 3000、react-scripts 默认 3000），根据 techStack/runCommand 推断并填上；部署前会检查该端口是否被占用，占用则 kill 后重启
 - local 目标的 url 可留空串（后端真实执行后会填入真实端口地址）
 - 云托管目标产出形如 https://<project>.applloom.dev 的 URL
 - Git 导出目标产出形如 https://github.com/applloom/<project> 的仓库链接
@@ -44,5 +46,6 @@ export const DEPLOYER_SYSTEM_PROMPT = `# 角色
   "url": "",
   "repoUrl": "",
   "buildLog": "1. npm install（安装依赖）\\n2. npm run dev（启动 Vite dev server）\\n3. 后端解析 stdout 获取本地 URL",
-  "status": "success"
+  "status": "success",
+  "port": 5173
 }`;

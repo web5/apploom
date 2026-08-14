@@ -16,6 +16,8 @@ export const DeploySchema = z.object({
   buildLog: z.string(),
   /** 部署状态 */
   status: z.enum(['success', 'failed']),
+  /** 期望启动的本地端口（local 目标时，部署前会检查占用并 kill） */
+  port: z.number().int().min(1024).max(65535).optional(),
 });
 
 export type DeployDocument = z.infer<typeof DeploySchema>;
@@ -29,6 +31,7 @@ export const DEPLOY_JSON_SCHEMA = {
     repoUrl: { type: 'string', description: 'Git 仓库链接（导出时，无则为空串）' },
     buildLog: { type: 'string', description: '构建日志摘要' },
     status: { type: 'string', enum: ['success', 'failed'], description: '部署状态' },
+    port: { type: 'number', description: '期望启动的本地端口（local 目标时，如 vite 5173 / next 3000；部署前会检查占用并 kill）' },
   },
   required: ['target', 'url', 'repoUrl', 'buildLog', 'status'],
   additionalProperties: false,

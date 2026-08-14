@@ -89,6 +89,32 @@ function parseLocalUrl(text: string): string | null {
   return m ? m[0].replace('0.0.0.0', 'localhost') : null;
 }
 
+/** 检查端口是否被占用，占用则 kill 掉占用进程，再等端口释放 */
+async function checkAndKillPort(port: number, onLog: (line: string) => void): Promise<void> {
+  const lsof = spawn('lsof', ['-ti', `:${port}`], { shell: false });
+  let out = '';
+  lsof.stdout?.on('data', (b) => (out += b.toString()));
+  lsof.stderr?.on('data', () => {});
+  await new Promise<void>((resolve) => lsof.on('exit', () => resolve()));
+
+  const pids = out.trim().split('\n').filter(Boolean);
+  if (pids.length === 0) {
+    onLog(`[port] ${port} 空闲`);
+    return;
+  }
+  onLog(`[port] ${port} 被占用（PID: ${pids.join(', ')}），kill 后重启`);
+  for (const pid of pids) {
+    try {
+      process.kill(Number(pid), 'SIGKILL');
+      onLog(`[port] ✓ 已 kill ${pid}`);
+    } catch (e) {
+      onLog(`[port] ✕ kill ${pid} 失败: ${(e as Error).message}`);
+    }
+  }
+  // 等一小会让内核释放端口
+  await new Promise((r) => setTimeout(r, 500));
+}
+
 /** 写盘：所有文件必须在 ROOT/{docId} 下（防 codegen 输出 ../../etc/passwd 之类） */
 const ROOT = '/tmp/apploom-deploy';
 
@@ -123,6 +149,7 @@ export class LocalDeployService {
       runCommand: string;
     },
     onProgress: (chunk: string) => void,
+    port?: number,
   ): Promise<DeployOutput> {
     const log: string[] = [];
     const writeLog = (line: string) => {
@@ -159,6 +186,11 @@ export class LocalDeployService {
     }
 
     // 3) 启动 dev server（detached，后台跑）
+    // 启动前：若指定了期望端口，先检查占用，占用则 kill 掉再启动
+    if (port) {
+      await checkAndKillPort(port, writeLog);
+      step(`[port] 目标端口 ${port} 已就绪`);
+    }
     step(`[dev] 启动 ${codegen.runCommand}（解析 URL 等待 30s）`);
     // 若 runCommand 含 shell 操作符（&& | ; 等），按空格拆会把这些字符当成参数。
     // 含元字符时改用 shell 执行（组合命令只能靠 shell 解析）；纯命令保持 shell:false 安全拆分。

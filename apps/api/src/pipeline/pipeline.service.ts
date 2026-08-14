@@ -407,12 +407,13 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
           repoUrl: string;
           buildLog: string;
           status: 'success' | 'failed';
+          port?: number;
         } | undefined;
         if (!deploy) return { raw: r.raw, error: '部署方案解析失败', llmLogs: logs };
 
         // 2) local 目标 → LocalDeployService 真实执行，用真实结果覆盖 LLM 的占位值
         if (deploy.target === 'local') {
-          const out = await this.deploySvc.deploy(docId, codegen, onToken);
+          const out = await this.deploySvc.deploy(docId, codegen, onToken, deploy.port);
           const merged = { ...deploy, url: out.url, buildLog: out.buildLog, status: out.status };
           return {
             raw: out.buildLog,
