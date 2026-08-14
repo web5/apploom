@@ -178,17 +178,20 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     const state = doc.stages[stage];
     if (!state) return false;
 
-    // 自动修复兜底：无 feedback 时用 error；仍无则拒绝
-    const effectiveFeedback = (feedback ?? '').trim() || state.error;
-    if (!effectiveFeedback) return false;
+    // feedback 省略 → 自动修复（用上次 error 兜底）；显式传（可为空串）→ 手动重跑
+    const isAuto = feedback === undefined;
+    const effectiveFeedback = isAuto ? state.error : (feedback ?? '').trim();
+    // 自动修复必须有 error 才能修；手动重跑允许空反馈（无反馈重新生成）
+    if (isAuto && !effectiveFeedback) return false;
 
     await this.store.update(id, (d) => {
       const st = d.stages[stage];
       // 归档上次产出（成功产出或失败 error），供 LLM 参考
       if (!st.history) st.history = [];
       st.history.push({ result: st.result, error: st.error });
-      // 保留用户最新反馈，供 buildRepair 使用
-      st.feedback = effectiveFeedback;
+      // 有反馈才保存；空反馈 = 无反馈重跑（buildRepair 因空串返回 undefined）
+      if (effectiveFeedback) st.feedback = effectiveFeedback;
+      else delete st.feedback;
       // 重置本阶段，清掉旧产出
       st.status = 'pending';
       st.result = undefined;

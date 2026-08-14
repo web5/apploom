@@ -232,7 +232,7 @@ function StudioPageInner() {
       const res = await fetch(`/api/pipeline/${id}/repair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage, feedback: feedback?.trim() || undefined }),
+        body: JSON.stringify({ stage, feedback: feedback?.trim() }),
       });
       if (!res.ok) setError(await res.text());
       else {
@@ -305,14 +305,14 @@ function StudioPageInner() {
     <div className="repair-box">
       <textarea
         className="ta repair-ta"
-        placeholder={`用一句话告诉 AI 怎么改「${STAGE_LABEL[stage]}」，例如：改成深色主题 / 去掉 XX 功能 / 修复报错：xxx`}
+        placeholder={`用一句话告诉 AI 怎么改「${STAGE_LABEL[stage]}」，例如：改成深色主题 / 去掉 XX 功能 / 修复报错：xxx。留空则直接重新生成`}
         value={repairText}
         onChange={(e) => setRepairText(e.target.value)}
         autoFocus
       />
       <div className="row">
-        <button className="btn btn-primary" onClick={() => repairStage(stage, repairText)} disabled={busy[stage] || !repairText.trim()}>
-          {busy[stage] ? '提交中…' : '提交修改'}
+        <button className="btn btn-primary" onClick={() => repairStage(stage, repairText)} disabled={busy[stage]}>
+          {busy[stage] ? '提交中…' : (repairText.trim() ? '提交修改' : '直接重新生成')}
         </button>
         <button className="btn btn-ghost" onClick={() => { setRepairOpen(null); setRepairText(''); }}>取消</button>
       </div>
