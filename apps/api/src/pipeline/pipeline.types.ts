@@ -99,7 +99,7 @@ export function createPipelineDoc(requirement: string, confirmEachStep: boolean)
 /** 事件类型（通过 EventEmitter 桥接 worker → SSE） */
 export type PipelineEvent =
   | { type: 'snapshot'; doc: PipelineDoc }
-  | { type: 'stage'; stage: PipelineStage; status: StageStatus; summary?: unknown }
+  | { type: 'stage'; stage: PipelineStage; status: StageStatus; summary?: unknown; result?: unknown }
   | { type: 'token'; stage: PipelineStage; token: string }
   | { type: 'job'; status: PipelineStatus }
   | { type: 'done'; doc: PipelineDoc }

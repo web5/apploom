@@ -122,14 +122,19 @@ function StudioPageInner() {
 
     es.addEventListener('snapshot', (e) => setDoc(parseDoc(e as MessageEvent)));
     es.addEventListener('stage', (e) => {
-      const { stage, status, summary } = JSON.parse((e as MessageEvent).data) as {
-        stage: Stage; status: StageStatus; summary?: unknown;
+      const { stage, status, summary, result } = JSON.parse((e as MessageEvent).data) as {
+        stage: Stage; status: StageStatus; summary?: unknown; result?: unknown;
       };
       setDoc((prev) => prev ? {
         ...prev,
         stages: {
           ...prev.stages,
-          [stage]: { ...prev.stages[stage], status, summary: summary ?? prev.stages[stage].summary },
+          [stage]: {
+            ...prev.stages[stage],
+            status,
+            summary: summary ?? prev.stages[stage].summary,
+            result: result ?? prev.stages[stage].result,
+          },
         },
       } : prev);
     });

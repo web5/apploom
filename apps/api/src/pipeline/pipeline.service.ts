@@ -214,7 +214,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         d.stages[stage].summary = result.summary;
         d.stages[stage].finishedAt = new Date().toISOString();
       });
-      this.bus.emit(docId, { type: 'stage', stage, status: 'done', summary: result.summary });
+      this.bus.emit(docId, { type: 'stage', stage, status: 'done', summary: result.summary, result: result.result });
     }
 
     // —— 交接：确认模式挂起 / 自动模式入队下一阶段 / 最后阶段完成 ——
