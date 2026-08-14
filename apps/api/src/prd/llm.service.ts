@@ -80,6 +80,7 @@ export class LlmService {
   ): Promise<PrdResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
+      label: 'generatePrd',
       system: REQUIREMENT_ANALYST_SYSTEM_PROMPT,
       user: `用户需求：\n${requirement}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.7,
@@ -122,6 +123,7 @@ export class LlmService {
   ): Promise<DesignResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
+      label: 'generateDesign',
       system: ARCHITECT_SYSTEM_PROMPT,
       user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.5,
@@ -165,6 +167,7 @@ export class LlmService {
   ): Promise<CodegenResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
+      label: 'generateCodegen',
       system: CODEGEN_SYSTEM_PROMPT,
       user: `上游 DesignDocument：\n${JSON.stringify(design, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,
@@ -209,6 +212,7 @@ export class LlmService {
   ): Promise<DeployResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
+      label: 'generateDeploy',
       system: DEPLOYER_SYSTEM_PROMPT,
       user: `上游 CodegenDocument：\n${JSON.stringify(codegen, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,

@@ -1,6 +1,8 @@
 import type { LLMProviderConfig } from './providers';
 
 export interface ChatOptions {
+  /** 调用方标识（如 'generateDeploy'），日志里显示 */
+  label?: string;
   system?: string;
   user: string;
   temperature?: number;
@@ -23,6 +25,15 @@ export interface ChatResult {
  * - 支持结构化输出（json_schema 或 json_object 回退）
  */
 export async function chat(config: LLMProviderConfig, options: ChatOptions): Promise<ChatResult> {
+  const tag = options.label ? `[LLM:${options.label}]` : '[LLM]';
+
+  // —— 请求侧日志（便于调试 prompt / 反馈是否正确传入）——
+  // 截断避免超长污染终端，但保留完整可追溯性
+  const trunc = (s: string, n = 800) => (s.length > n ? `${s.slice(0, n)}…(+${s.length - n} chars)` : s);
+  console.error(`${tag} → model=${config.model} temp=${options.temperature ?? 0.7} stream=${!!options.stream}${options.jsonSchema ? ` schema=${options.jsonSchema.name}` : ''}`);
+  console.error(`${tag} → system: ${trunc(options.system ?? '(none)', 500)}`);
+  console.error(`${tag} → user: ${trunc(options.user, 1500)}`);
+
   const messages: Array<{ role: string; content: string }> = [];
   if (options.system) messages.push({ role: 'system', content: options.system });
   messages.push({ role: 'user', content: options.user });
@@ -91,6 +102,7 @@ export async function chat(config: LLMProviderConfig, options: ChatOptions): Pro
         }
       }
     }
+    console.error(`${tag} ← stream done, total=${content.length} chars: ${trunc(content, 600)}`);
     return { content };
   }
 
@@ -99,8 +111,10 @@ export async function chat(config: LLMProviderConfig, options: ChatOptions): Pro
     choices?: Array<{ message?: { content?: string } }>;
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
+  const resultContent = json.choices?.[0]?.message?.content ?? '';
+  console.error(`${tag} ← ${resultContent.length} chars: ${trunc(resultContent, 600)}`);
   return {
-    content: json.choices?.[0]?.message?.content ?? '',
+    content: resultContent,
     usage: json.usage
       ? { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0 }
       : undefined,
