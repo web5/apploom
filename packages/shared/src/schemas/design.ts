@@ -28,7 +28,7 @@ export const DesignSchema = z.object({
   /** API 接口清单 */
   apis: z.array(
     z.object({
-      method: z.enum(['GET', 'POST', 'PUT', 'DELETE']),
+      method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
       path: z.string(),
       description: z.string(),
     }),
@@ -81,7 +81,7 @@ export const DESIGN_JSON_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'DELETE'] },
+          method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
           path: { type: 'string' },
           description: { type: 'string' },
         },
