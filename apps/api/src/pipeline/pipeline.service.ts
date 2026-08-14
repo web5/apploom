@@ -164,6 +164,58 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
+  /**
+   * AI 修复/修改：带反馈重新生成某个阶段。
+   *   - feedback 显式传入 → 手动修复（用户填修改意见）
+   *   - feedback 省略 → 自动修复（用上次 error 作为反馈）
+   *
+   * 关键：把当前 result/error 归档到 history，LLM 能参考「上次产出 + 反馈」修正，
+   * 而不是无脑重跑。下游阶段（handoffs）清空，修完后重新跑。
+   */
+  async repair(id: string, stage: PipelineStage, feedback?: string): Promise<boolean> {
+    const doc = await this.store.get(id);
+    if (!doc) return false;
+    const state = doc.stages[stage];
+    if (!state) return false;
+
+    // 自动修复兜底：无 feedback 时用 error；仍无则拒绝
+    const effectiveFeedback = (feedback ?? '').trim() || state.error;
+    if (!effectiveFeedback) return false;
+
+    await this.store.update(id, (d) => {
+      const st = d.stages[stage];
+      // 归档上次产出（成功产出或失败 error），供 LLM 参考
+      if (!st.history) st.history = [];
+      st.history.push({ result: st.result, error: st.error });
+      // 保留用户最新反馈，供 buildRepair 使用
+      st.feedback = effectiveFeedback;
+      // 重置本阶段，清掉旧产出
+      st.status = 'pending';
+      st.result = undefined;
+      st.raw = undefined;
+      st.error = undefined;
+      st.summary = undefined;
+      d.handoffs[stage] = false;
+      // 下游阶段要重新跑（上游变了，下游产出作废）
+      const idx = PIPELINE_STAGES.indexOf(stage);
+      for (const s of PIPELINE_STAGES.slice(idx + 1)) {
+        if (d.stages[s].status === 'done' || d.stages[s].status === 'failed') {
+          d.stages[s].status = 'pending';
+          d.stages[s].result = undefined;
+          d.stages[s].raw = undefined;
+          d.stages[s].error = undefined;
+          d.stages[s].summary = undefined;
+        }
+        d.handoffs[s] = false;
+      }
+      d.status = 'running';
+      d.currentStage = stage;
+    });
+    await this.enqueueStage(id, stage);
+    this.bus.emit(id, { type: 'job', status: 'running' });
+    return true;
+  }
+
   // ===================== Worker 处理器 =====================
 
   /** 处理单个阶段 job（链式交接） */
@@ -279,6 +331,18 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     await this.queue.add(stage, { docId, stage });
   }
 
+  /** 构造带反馈的重生成上下文（有 feedback 或上次失败时） */
+  private buildRepair(stage: PipelineStage, doc: PipelineDoc): { feedback: string; previous?: unknown; previousError?: string } | undefined {
+    const state = doc.stages[stage];
+    if (!state.feedback) return undefined;
+    const lastHistory = state.history?.[state.history.length - 1];
+    return {
+      feedback: state.feedback,
+      previous: lastHistory?.result ?? state.result,
+      previousError: lastHistory?.error,
+    };
+  }
+
   /** 执行单个 Agent 阶段，输入取自上游阶段产出 */
   private async runStage(
     stage: PipelineStage,
@@ -286,17 +350,18 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     docId: string,
     onToken: (token: string) => void,
   ): Promise<StageRunResult> {
+    const repair = this.buildRepair(stage, doc);
     switch (stage) {
       case 'requirement': {
-        const r = await this.llm.generatePrd(doc.requirement, onToken);
+        const r = await this.llm.generatePrd(doc.requirement, onToken, repair);
         return { raw: r.raw, result: r.prd, summary: r.summary, error: r.error };
       }
       case 'design': {
-        const r = await this.llm.generateDesign(doc.stages.requirement.result, onToken);
+        const r = await this.llm.generateDesign(doc.stages.requirement.result, onToken, repair);
         return { raw: r.raw, result: r.design, summary: r.summary, error: r.error };
       }
       case 'codegen': {
-        const r = await this.llm.generateCodegen(doc.stages.design.result, onToken);
+        const r = await this.llm.generateCodegen(doc.stages.design.result, onToken, repair);
         return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error };
       }
       case 'deploy': {

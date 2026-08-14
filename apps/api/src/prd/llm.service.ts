@@ -52,16 +52,36 @@ export interface PrdResult {
  * 需求分析 Agent 服务：几句话需求 → 结构化 PRD（带流式回调 + Zod 校验）
  * 这是 W3 的核心，但作为提示词调试闭环的最小功能先跑通。
  */
+/** 带反馈重生成上下文：用户修复意见 + 上次产出/错误 */
+export interface RepairContext {
+  feedback: string;
+  previous?: unknown;
+  previousError?: string;
+}
+
+/** 拼装带反馈的 user 提示词 */
+function buildRepairSuffix(repair: RepairContext): string {
+  let s = `\n\n# 修改要求（重要）\n请根据以下反馈，修正你上一次的产出并重新输出完整结果：\n反馈：${repair.feedback}`;
+  if (repair.previous !== undefined) {
+    s += `\n\n上次产出（供参考，请在此基础上修正）：\n${JSON.stringify(repair.previous, null, 2)}`;
+  }
+  if (repair.previousError) {
+    s += `\n\n上次失败原因：\n${repair.previousError}`;
+  }
+  return s;
+}
+
 @Injectable()
 export class LlmService {
   async generatePrd(
     requirement: string,
     onToken: (token: string) => void,
+    repair?: RepairContext,
   ): Promise<PrdResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       system: REQUIREMENT_ANALYST_SYSTEM_PROMPT,
-      user: `用户需求：\n${requirement}`,
+      user: `用户需求：\n${requirement}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.7,
       jsonSchema: { name: 'PRD', schema: PRD_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
@@ -98,11 +118,12 @@ export class LlmService {
   async generateDesign(
     prd: unknown,
     onToken: (token: string) => void,
+    repair?: RepairContext,
   ): Promise<DesignResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       system: ARCHITECT_SYSTEM_PROMPT,
-      user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}`,
+      user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.5,
       jsonSchema: { name: 'DesignDocument', schema: DESIGN_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
@@ -140,11 +161,12 @@ export class LlmService {
   async generateCodegen(
     design: unknown,
     onToken: (token: string) => void,
+    repair?: RepairContext,
   ): Promise<CodegenResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       system: CODEGEN_SYSTEM_PROMPT,
-      user: `上游 DesignDocument：\n${JSON.stringify(design, null, 2)}`,
+      user: `上游 DesignDocument：\n${JSON.stringify(design, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,
       maxTokens: 8192,
       jsonSchema: { name: 'CodegenDocument', schema: CODEGEN_JSON_SCHEMA as unknown as Record<string, unknown> },

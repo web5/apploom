@@ -99,6 +99,8 @@ function StudioPageInner() {
   const [doc, setDoc] = useState<PipelineDoc | null>(null);
   const [tokens, setTokens] = useState<Record<Stage, string>>(emptyTokens());
   const [busy, setBusy] = useState<Record<Stage, boolean>>({ requirement: false, design: false, codegen: false, deploy: false });
+  const [repairOpen, setRepairOpen] = useState<Stage | null>(null);
+  const [repairText, setRepairText] = useState('');
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
   const esRef = useRef<EventSource | null>(null);
@@ -218,6 +220,26 @@ function StudioPageInner() {
       setError((e as Error).message);
     } finally {
       setBusy((prev) => ({ ...prev, [target]: false }));
+    }
+  }
+
+  /** AI 修复/修改：带反馈重新生成。feedback 省略则自动用 error（自动修复） */
+  async function repairStage(stage: Stage, feedback?: string) {
+    const id = docIdRef.current;
+    if (!id) return;
+    setBusy((prev) => ({ ...prev, [stage]: true }));
+    try {
+      const res = await fetch(`/api/pipeline/${id}/repair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage, feedback: feedback?.trim() || undefined }),
+      });
+      if (!res.ok) setError(await res.text());
+      else { setRepairOpen(null); setRepairText(''); }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy((prev) => ({ ...prev, [stage]: false }));
     }
   }
 
@@ -389,9 +411,38 @@ function StudioPageInner() {
                         <div className="confirm-box fail-box">
                           <span>❌ {stageState?.error || '执行失败'}</span>
                           <button className="btn btn-retry" onClick={() => retryStage(stage)} disabled={busy[stage]}>
-                            {busy[stage] ? '重试中…' : '重试该阶段'}
+                            {busy[stage] ? '重试中…' : '重试'}
+                          </button>
+                          <button className="btn btn-ai-fix" onClick={() => repairStage(stage)} disabled={busy[stage]}>
+                            {busy[stage] ? '修复中…' : 'AI 修复'}
                           </button>
                         </div>
+                      </div>
+                    )}
+                    {st === 'done' && (
+                      <div className="stage-body">
+                        <div className="stage-actions">
+                          <button className="btn btn-edit" onClick={() => { setRepairOpen(repairOpen === stage ? null : stage); setRepairText(''); }}>
+                            ✏ 修改
+                          </button>
+                        </div>
+                        {repairOpen === stage && (
+                          <div className="repair-box">
+                            <textarea
+                              className="ta repair-ta"
+                              placeholder={`告诉 AI 怎么改「${STAGE_LABEL[stage]}」，例如：改成深色主题 / 去掉 XX 功能 / 修复报错：xxx`}
+                              value={repairText}
+                              onChange={(e) => setRepairText(e.target.value)}
+                              autoFocus
+                            />
+                            <div className="row">
+                              <button className="btn btn-primary" onClick={() => repairStage(stage, repairText)} disabled={busy[stage] || !repairText.trim()}>
+                                {busy[stage] ? '提交中…' : '提交修改'}
+                              </button>
+                              <button className="btn btn-ghost" onClick={() => { setRepairOpen(null); setRepairText(''); }}>取消</button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     {stageMeta(stage, prd, design, codegen, deploy)}
@@ -467,6 +518,13 @@ function StudioPageInner() {
         .btn-retry { background:#ef4444; color:#fff; }
         .btn-retry:hover { background:#dc2626; }
         .btn-retry:disabled { background:#d1d5db; cursor:not-allowed; }
+        .btn-ai-fix { background:#10b981; color:#fff; }
+        .btn-ai-fix:hover { background:#059669; }
+        .btn-ai-fix:disabled { background:#d1d5db; cursor:not-allowed; }
+        .btn-edit { background:#f0f1f3; color:#6b7280; }
+        .btn-edit:hover { background:#e5e7eb; }
+        .btn-ghost { background:transparent; color:#6b7280; border:1px solid #e5e7eb; }
+        .btn-ghost:hover { background:#f0f1f3; }
         .confirm-toggle { margin-left:8px; font-size:12px; color:#6b7280; display:flex; align-items:center; gap:6px; cursor:pointer; }
         .confirm-toggle input { accent-color:#3b82f6; }
 
@@ -513,6 +571,9 @@ function StudioPageInner() {
         .stage-body { margin-top:10px; display:flex; flex-direction:column; gap:10px; }
         .confirm-box { display:flex; align-items:center; justify-content:space-between; gap:10px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:12px; color:#92400e; }
         .fail-box { background:#fef2f2; border-color:#fca5a5; color:#991b1b; }
+        .stage-actions { display:flex; justify-content:flex-end; }
+        .repair-box { display:flex; flex-direction:column; gap:8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; }
+        .repair-ta { min-height:64px; font-size:13px; }
         .meta-row { display:flex; gap:16px; font-size:12px; color:#6b7280; }
         .meta-row .ok { color:#10b981; font-weight:600; }
         .meta-row .fail { color:#ef4444; font-weight:600; }
@@ -610,7 +671,7 @@ function stageMeta(stage: Stage, prd?: PRD, design?: Design, codegen?: Codegen, 
     return (
       <div className="stage-body">
         <div className="meta-row">
-          <span>目标 {deploy.target === 'cloud' ? '云托管' : 'Git 导出'}</span>
+          <span>目标 {deploy.target === 'local' ? '本地' : deploy.target === 'cloud' ? '云托管' : 'Git 导出'}</span>
           <span className={deploy.status === 'success' ? 'ok' : 'fail'}>
             {deploy.status === 'success' ? '✓ 成功' : '✗ 失败'}
           </span>

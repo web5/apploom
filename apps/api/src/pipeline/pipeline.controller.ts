@@ -155,4 +155,24 @@ export class PipelineController {
     }
     res.json({ ok: true });
   }
+
+  /** AI 修复/修改：带反馈重新生成某阶段（feedback 省略则自动用 error） */
+  @Post(':id/repair')
+  async repair(
+    @Param('id') id: string,
+    @Body() body: { stage?: string; feedback?: string },
+    @Res() res: Response,
+  ) {
+    const stage = body?.stage as PipelineStage | undefined;
+    if (!stage || !PIPELINE_STAGES.includes(stage)) {
+      res.status(400).json({ message: `stage 无效，可选: ${PIPELINE_STAGES.join(' | ')}` });
+      return;
+    }
+    const ok = await this.pipeline.repair(id, stage, body?.feedback);
+    if (!ok) {
+      res.status(400).json({ message: '任务不存在或阶段缺少可修复的 feedback/error' });
+      return;
+    }
+    res.json({ ok: true });
+  }
 }

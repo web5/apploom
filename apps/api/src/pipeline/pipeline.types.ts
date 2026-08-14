@@ -41,6 +41,10 @@ export interface StageState {
   error?: string;
   /** 已尝试次数（重试会 +1） */
   attempts: number;
+  /** 用户填的修复/修改意见（带反馈重生成） */
+  feedback?: string;
+  /** 历史产出（供 LLM 参考「上次产出 + 反馈」） */
+  history?: Array<{ result?: unknown; error?: string }>;
   startedAt?: string;
   finishedAt?: string;
 }
