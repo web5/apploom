@@ -13,9 +13,9 @@ export const CodegenSchema = z.object({
       content: z.string(),
     }),
   ),
-  /** 运行所需依赖清单（仅 npm 包名，不含 shell 命令/操作符） */
+  /** 运行所需依赖清单（包名@版本，如 react@^18；不含 shell 命令/操作符） */
   dependencies: z.array(
-    z.string().regex(/^[@a-zA-Z0-9][a-zA-Z0-9@._/-]*$/, '依赖必须是合法 npm 包名（如 react、@prisma/client），不能含命令/操作符'),
+    z.string().regex(/^[a-zA-Z0-9@._\/\-^~*]+$/, '依赖必须是合法 npm 包名（如 react@^18、@prisma/client），不能含命令/操作符/空格'),
   ),
   /** 本地启动命令 */
   runCommand: z.string(),
@@ -43,8 +43,8 @@ export const CODEGEN_JSON_SCHEMA = {
     },
     dependencies: {
       type: 'array',
-      items: { type: 'string', pattern: '^[@a-zA-Z0-9][a-zA-Z0-9@._/-]*$' },
-      description: '运行所需依赖清单（仅 npm 包名，如 react、@prisma/client；命令放 runCommand，不要放 && / 空格等）',
+      items: { type: 'string', pattern: '^[a-zA-Z0-9@._/\\-^~*]+$' },
+      description: '运行所需依赖清单（包名@版本，如 react@^18、@prisma/client；命令放 runCommand，不要放 && / 空格等）',
     },
     runCommand: { type: 'string', description: '本地启动命令，如 npm run dev' },
     notes: { type: 'array', items: { type: 'string' }, description: '需要用户注意的点' },

@@ -28,6 +28,16 @@ export type StageStatus =
   | 'failed'           // 失败，可重试
   | 'waiting_confirm'; // 等待确认后继续下一步
 
+/** 单次 LLM 调用日志（供前端页面调试入口展示） */
+export interface LlmLogEntry {
+  label: string;
+  ts: string;
+  /** user prompt（含 repair 反馈，是调试关键） */
+  user: string;
+  /** 模型响应原文 */
+  response: string;
+}
+
 /** 单个阶段的执行结果 */
 export interface StageState {
   status: StageStatus;
@@ -45,6 +55,8 @@ export interface StageState {
   feedback?: string;
   /** 历史产出（供 LLM 参考「上次产出 + 反馈」） */
   history?: Array<{ result?: unknown; error?: string }>;
+  /** 本阶段 LLM 调用日志（调试入口展示） */
+  llmLogs?: LlmLogEntry[];
   startedAt?: string;
   finishedAt?: string;
 }

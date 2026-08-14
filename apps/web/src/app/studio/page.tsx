@@ -17,6 +17,13 @@ interface StageState {
   attempts: number;
   startedAt?: string;
   finishedAt?: string;
+  llmLogs?: LlmLogEntry[];
+}
+interface LlmLogEntry {
+  label: string;
+  ts: string;
+  user: string;
+  response: string;
 }
 interface PipelineDoc {
   id: string;
@@ -115,6 +122,7 @@ function StudioPageInner() {
   const [error, setError] = useState('');
   const [history, setHistory] = useState<PipelineDocSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [logOpen, setLogOpen] = useState<Stage | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const docIdRef = useRef<string | null>(null);
 
@@ -499,7 +507,15 @@ function StudioPageInner() {
                       <span className="stage-num">{statusIcon(st, i + 1)}</span>
                       <span className="stage-title">{STAGE_LABEL[stage]}</span>
                       <span className={`badge badge-${st}`}>{statusLabel(st)}</span>
+                      {stageState?.llmLogs && stageState.llmLogs.length > 0 && (
+                        <button className="btn btn-log" onClick={() => setLogOpen(logOpen === stage ? null : stage)}>
+                          🐞 日志
+                        </button>
+                      )}
                     </div>
+                    {logOpen === stage && stageState?.llmLogs && (
+                      <LlmLogPanel logs={stageState.llmLogs} />
+                    )}
                     {st === 'running' && <StageLoading stage={stage} streaming={tokens[stage]} />}
                     {st === 'waiting_confirm' && (
                       <div className="stage-body">
@@ -691,6 +707,16 @@ function StudioPageInner() {
         .stage-actions { display:flex; justify-content:flex-end; }
         .repair-box { display:flex; flex-direction:column; gap:8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; }
         .repair-ta { min-height:64px; font-size:13px; }
+        .btn-log { background:#f0f1f3; color:#6b7280; padding:4px 10px; font-size:11px; margin-left:auto; }
+        .btn-log:hover { background:#e5e7eb; }
+        .llm-log-panel { display:flex; flex-direction:column; gap:10px; margin-top:10px; }
+        .llm-log-entry { border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fafafa; }
+        .llm-log-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+        .llm-log-label { font-size:11px; font-weight:700; color:#6d28d9; background:#ede9fe; padding:2px 8px; border-radius:999px; }
+        .llm-log-ts { font-size:10px; color:#9ca3af; }
+        .llm-log-section { margin-top:6px; }
+        .llm-log-title { font-size:11px; color:#6b7280; font-weight:600; margin-bottom:4px; }
+        .llm-log-pre { font-family:'SF Mono',monospace; font-size:10px; line-height:1.5; white-space:pre-wrap; word-break:break-all; color:#374151; background:#fff; border:1px solid #e5e7eb; border-radius:6px; padding:6px 8px; margin:0; max-height:200px; overflow-y:auto; }
         .meta-row { display:flex; gap:16px; font-size:12px; color:#6b7280; }
         .meta-row .ok { color:#10b981; font-weight:600; }
         .meta-row .fail { color:#ef4444; font-weight:600; }
@@ -866,6 +892,30 @@ function StageLoading({ stage, streaming }: { stage: Stage; streaming: string })
           <span style={{ display: 'inline-block', color: '#3b82f6', animation: 'studio-blink 1s step-end infinite' }}>▋</span>
         </div>
       )}
+    </div>
+  );
+}
+
+/** LLM 调试日志面板：展示该阶段每次 LLM 调用的 user prompt（含 repair 反馈）与响应 */
+function LlmLogPanel({ logs }: { logs: LlmLogEntry[] }) {
+  return (
+    <div className="llm-log-panel">
+      {logs.map((log, i) => (
+        <div key={i} className="llm-log-entry">
+          <div className="llm-log-head">
+            <span className="llm-log-label">{log.label}</span>
+            <span className="llm-log-ts">{new Date(log.ts).toLocaleTimeString()}</span>
+          </div>
+          <div className="llm-log-section">
+            <div className="llm-log-title">→ user（请求）</div>
+            <pre className="llm-log-pre">{log.user}</pre>
+          </div>
+          <div className="llm-log-section">
+            <div className="llm-log-title">← response（响应）</div>
+            <pre className="llm-log-pre">{log.response}</pre>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

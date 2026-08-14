@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { loadProviderFromEnv, chat } from '@apploom/llm';
+import { loadProviderFromEnv, chat, type LlmLogEntry } from '@apploom/llm';
 import {
   PRDSchema,
   PRD_JSON_SCHEMA,
@@ -77,10 +77,12 @@ export class LlmService {
     requirement: string,
     onToken: (token: string) => void,
     repair?: RepairContext,
+    onLog?: (entry: LlmLogEntry) => void,
   ): Promise<PrdResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       label: 'generatePrd',
+      onLog,
       system: REQUIREMENT_ANALYST_SYSTEM_PROMPT,
       user: `用户需求：\n${requirement}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.7,
@@ -120,10 +122,12 @@ export class LlmService {
     prd: unknown,
     onToken: (token: string) => void,
     repair?: RepairContext,
+    onLog?: (entry: LlmLogEntry) => void,
   ): Promise<DesignResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       label: 'generateDesign',
+      onLog,
       system: ARCHITECT_SYSTEM_PROMPT,
       user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.5,
@@ -164,10 +168,12 @@ export class LlmService {
     design: unknown,
     onToken: (token: string) => void,
     repair?: RepairContext,
+    onLog?: (entry: LlmLogEntry) => void,
   ): Promise<CodegenResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       label: 'generateCodegen',
+      onLog,
       system: CODEGEN_SYSTEM_PROMPT,
       user: `上游 DesignDocument：\n${JSON.stringify(design, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,
@@ -209,10 +215,12 @@ export class LlmService {
     codegen: unknown,
     onToken: (token: string) => void,
     repair?: RepairContext,
+    onLog?: (entry: LlmLogEntry) => void,
   ): Promise<DeployResult> {
     const provider = loadProviderFromEnv();
     const result = await chat(provider, {
       label: 'generateDeploy',
+      onLog,
       system: DEPLOYER_SYSTEM_PROMPT,
       user: `上游 CodegenDocument：\n${JSON.stringify(codegen, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,

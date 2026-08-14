@@ -1,8 +1,20 @@
 import type { LLMProviderConfig } from './providers';
 
+/** 单次 LLM 调用日志（存 doc 供前端页面调试入口展示） */
+export interface LlmLogEntry {
+  label: string;
+  ts: string;
+  /** user prompt（含 repair 反馈，是调试关键） */
+  user: string;
+  /** 模型响应原文 */
+  response: string;
+}
+
 export interface ChatOptions {
   /** 调用方标识（如 'generateDeploy'），日志里显示 */
   label?: string;
+  /** 日志回调：每次调用完成后，把 user prompt + response 回传 */
+  onLog?: (entry: LlmLogEntry) => void;
   system?: string;
   user: string;
   temperature?: number;
@@ -103,6 +115,7 @@ export async function chat(config: LLMProviderConfig, options: ChatOptions): Pro
       }
     }
     console.error(`${tag} ← stream done, total=${content.length} chars: ${trunc(content, 600)}`);
+    options.onLog?.({ label: options.label ?? 'llm', ts: new Date().toISOString(), user: options.user, response: content });
     return { content };
   }
 
@@ -113,6 +126,7 @@ export async function chat(config: LLMProviderConfig, options: ChatOptions): Pro
   };
   const resultContent = json.choices?.[0]?.message?.content ?? '';
   console.error(`${tag} ← ${resultContent.length} chars: ${trunc(resultContent, 600)}`);
+  options.onLog?.({ label: options.label ?? 'llm', ts: new Date().toISOString(), user: options.user, response: resultContent });
   return {
     content: resultContent,
     usage: json.usage

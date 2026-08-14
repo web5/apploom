@@ -25,6 +25,7 @@ import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
 import {
   PIPELINE_STAGES,
+  LlmLogEntry,
   PipelineDoc,
   PipelineDocSummary,
   PipelineEvent,
@@ -45,6 +46,7 @@ interface StageRunResult {
   result?: unknown;
   summary?: unknown;
   error?: string;
+  llmLogs?: LlmLogEntry[];
 }
 
 @Injectable()
@@ -288,6 +290,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
           d.stages[stage].result = result.result;
           d.stages[stage].raw = result.raw;
           d.stages[stage].summary = result.summary;
+          d.stages[stage].llmLogs = result.llmLogs;
           d.stages[stage].error = result.raw?.split('\n').filter(Boolean).slice(-1)[0] ?? '部署失败';
           d.stages[stage].finishedAt = new Date().toISOString();
         } else {
@@ -295,6 +298,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
           d.stages[stage].result = result.result;
           d.stages[stage].raw = result.raw;
           d.stages[stage].summary = result.summary;
+          d.stages[stage].llmLogs = result.llmLogs;
           d.stages[stage].finishedAt = new Date().toISOString();
         }
       });
@@ -369,18 +373,20 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     onToken: (token: string) => void,
   ): Promise<StageRunResult> {
     const repair = this.buildRepair(stage, doc);
+    const logs: LlmLogEntry[] = [];
+    const onLog = (entry: LlmLogEntry) => logs.push(entry);
     switch (stage) {
       case 'requirement': {
-        const r = await this.llm.generatePrd(doc.requirement, onToken, repair);
-        return { raw: r.raw, result: r.prd, summary: r.summary, error: r.error };
+        const r = await this.llm.generatePrd(doc.requirement, onToken, repair, onLog);
+        return { raw: r.raw, result: r.prd, summary: r.summary, error: r.error, llmLogs: logs };
       }
       case 'design': {
-        const r = await this.llm.generateDesign(doc.stages.requirement.result, onToken, repair);
-        return { raw: r.raw, result: r.design, summary: r.summary, error: r.error };
+        const r = await this.llm.generateDesign(doc.stages.requirement.result, onToken, repair, onLog);
+        return { raw: r.raw, result: r.design, summary: r.summary, error: r.error, llmLogs: logs };
       }
       case 'codegen': {
-        const r = await this.llm.generateCodegen(doc.stages.design.result, onToken, repair);
-        return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error };
+        const r = await this.llm.generateCodegen(doc.stages.design.result, onToken, repair, onLog);
+        return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error, llmLogs: logs };
       }
       case 'deploy': {
         const codegen = doc.stages.codegen.result as {
@@ -393,8 +399,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         }
 
         // 1) LLM 决策部署方案（target: local / cloud / git），repair 反馈也走 LLM
-        const r = await this.llm.generateDeploy(codegen, onToken, repair);
-        if (r.error) return { raw: r.raw, error: r.error };
+        const r = await this.llm.generateDeploy(codegen, onToken, repair, onLog);
+        if (r.error) return { raw: r.raw, error: r.error, llmLogs: logs };
         const deploy = r.deploy as {
           target: 'local' | 'cloud' | 'git';
           url: string;
@@ -402,7 +408,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
           buildLog: string;
           status: 'success' | 'failed';
         } | undefined;
-        if (!deploy) return { raw: r.raw, error: '部署方案解析失败' };
+        if (!deploy) return { raw: r.raw, error: '部署方案解析失败', llmLogs: logs };
 
         // 2) local 目标 → LocalDeployService 真实执行，用真实结果覆盖 LLM 的占位值
         if (deploy.target === 'local') {
@@ -412,6 +418,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
             raw: out.buildLog,
             result: merged,
             summary: { target: 'local', url: out.url, status: out.status, warnings: [] },
+            llmLogs: logs,
           };
         }
 
@@ -420,6 +427,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
           raw: r.raw,
           result: deploy,
           summary: { target: deploy.target, url: deploy.url, status: deploy.status, warnings: r.summary?.warnings ?? [] },
+          llmLogs: logs,
         };
       }
     }
