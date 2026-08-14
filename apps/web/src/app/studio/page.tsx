@@ -295,6 +295,25 @@ function StudioPageInner() {
   const previewLabel = deploy ? 'DeployDocument' : codegen ? 'CodegenDocument' : design ? 'DesignDocument' : prd ? 'PRD' : '待生成';
   const showStream = activeRunning;
 
+  /** 对话式修改输入框（done / waiting_confirm 状态通用） */
+  const repairEntry = (stage: Stage) => (
+    <div className="repair-box">
+      <textarea
+        className="ta repair-ta"
+        placeholder={`用一句话告诉 AI 怎么改「${STAGE_LABEL[stage]}」，例如：改成深色主题 / 去掉 XX 功能 / 修复报错：xxx`}
+        value={repairText}
+        onChange={(e) => setRepairText(e.target.value)}
+        autoFocus
+      />
+      <div className="row">
+        <button className="btn btn-primary" onClick={() => repairStage(stage, repairText)} disabled={busy[stage] || !repairText.trim()}>
+          {busy[stage] ? '提交中…' : '提交修改'}
+        </button>
+        <button className="btn btn-ghost" onClick={() => { setRepairOpen(null); setRepairText(''); }}>取消</button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="page">
       <header className="topbar">
@@ -400,10 +419,16 @@ function StudioPageInner() {
                       <div className="stage-body">
                         <div className="confirm-box">
                           <span>✅ 本阶段已完成，确认后进入下一阶段</span>
-                          <button className="btn btn-confirm" onClick={() => confirmStage(stage)} disabled={busy[stage]}>
-                            {busy[stage] ? '确认中…' : '确认继续 →'}
-                          </button>
+                          <div className="row">
+                            <button className="btn btn-edit" onClick={() => { setRepairOpen(repairOpen === stage ? null : stage); setRepairText(''); }}>
+                              ✏ 修改
+                            </button>
+                            <button className="btn btn-confirm" onClick={() => confirmStage(stage)} disabled={busy[stage]}>
+                              {busy[stage] ? '确认中…' : '确认继续 →'}
+                            </button>
+                          </div>
                         </div>
+                        {repairOpen === stage && repairEntry(stage)}
                       </div>
                     )}
                     {st === 'error' && (
@@ -426,23 +451,7 @@ function StudioPageInner() {
                             ✏ 修改
                           </button>
                         </div>
-                        {repairOpen === stage && (
-                          <div className="repair-box">
-                            <textarea
-                              className="ta repair-ta"
-                              placeholder={`告诉 AI 怎么改「${STAGE_LABEL[stage]}」，例如：改成深色主题 / 去掉 XX 功能 / 修复报错：xxx`}
-                              value={repairText}
-                              onChange={(e) => setRepairText(e.target.value)}
-                              autoFocus
-                            />
-                            <div className="row">
-                              <button className="btn btn-primary" onClick={() => repairStage(stage, repairText)} disabled={busy[stage] || !repairText.trim()}>
-                                {busy[stage] ? '提交中…' : '提交修改'}
-                              </button>
-                              <button className="btn btn-ghost" onClick={() => { setRepairOpen(null); setRepairText(''); }}>取消</button>
-                            </div>
-                          </div>
-                        )}
+                        {repairOpen === stage && repairEntry(stage)}
                       </div>
                     )}
                     {stageMeta(stage, prd, design, codegen, deploy)}
