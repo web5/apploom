@@ -235,7 +235,12 @@ function StudioPageInner() {
         body: JSON.stringify({ stage, feedback: feedback?.trim() || undefined }),
       });
       if (!res.ok) setError(await res.text());
-      else { setRepairOpen(null); setRepairText(''); }
+      else {
+        setRepairOpen(null);
+        setRepairText('');
+        // completed 任务修改后 SSE 已关闭（done 事件里 es.close），重新订阅以接收后续进度
+        subscribe(id);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
