@@ -160,17 +160,14 @@ export class LocalDeployService {
 
     // 3) 启动 dev server（detached，后台跑）
     step(`[dev] 启动 ${codegen.runCommand}（解析 URL 等待 30s）`);
-    // 把 runCommand 解析成 cmd + args（简单按空格切，MVP 不处理引号转义）
-    const tokens = codegen.runCommand.trim().split(/\s+/);
-    const devCmd = tokens[0];
-    const devArgs = tokens.slice(1);
-    const dev = spawn(devCmd, devArgs, {
-      cwd: root,
-      shell: false,
-      detached: true, // 独立进程组，便于清理
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, BROWSER: 'none', CI: '0' },
-    });
+    // 若 runCommand 含 shell 操作符（&& | ; 等），按空格拆会把这些字符当成参数。
+    // 含元字符时改用 shell 执行（组合命令只能靠 shell 解析）；纯命令保持 shell:false 安全拆分。
+    const runCommand = codegen.runCommand.trim();
+    const hasShellMeta = /[&|;<>]/.test(runCommand);
+    const tokens = runCommand.split(/\s+/);
+    const dev = hasShellMeta
+      ? spawn(runCommand, { cwd: root, shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, BROWSER: 'none', CI: '0' } })
+      : spawn(tokens[0], tokens.slice(1), { cwd: root, shell: false, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, BROWSER: 'none', CI: '0' } });
     dev.unref();
     this.logger.log(`dev server pid=${dev.pid} docId=${docId}`);
 

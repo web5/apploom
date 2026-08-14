@@ -26,6 +26,8 @@ export const CODEGEN_SYSTEM_PROMPT = `# 角色
 }
 
 # 约束
+- **runCommand 只写「启动命令」（如 npm run dev），不要写 npm install（依赖安装由部署阶段自动完成），也不要用 && / | / ; 连接多条命令**
+- dependencies 只放 npm 包名（如 react、@prisma/client），不要放命令或操作符
 - 技术栈以 techStack 字段为准，不得自行更换框架
 - 代码可运行优先，不过度设计
 - **单次生成文件数控制在 5-8 个核心文件**（超出会被 max_tokens 截断）。优先级：入口文件 > 路由 > 核心组件 > 数据模型 > 配置
