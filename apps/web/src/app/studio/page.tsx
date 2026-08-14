@@ -1,8 +1,35 @@
 'use client';
 
-import { useRef, useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 type Stage = 'requirement' | 'design' | 'codegen' | 'deploy';
-type Status = 'pending' | 'running' | 'done' | 'error';
+type Status = 'pending' | 'running' | 'done' | 'error' | 'waiting_confirm';
+
+// ===== 后端 PipelineDoc 契约（对齐 apps/api/src/pipeline/pipeline.types.ts）=====
+type PipelineStatus = 'created' | 'running' | 'waiting_confirm' | 'failed' | 'completed';
+type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'waiting_confirm';
+interface StageState {
+  status: StageStatus;
+  result?: unknown;
+  raw?: string;
+  summary?: unknown;
+  error?: string;
+  attempts: number;
+  startedAt?: string;
+  finishedAt?: string;
+}
+interface PipelineDoc {
+  id: string;
+  requirement: string;
+  status: PipelineStatus;
+  confirmEachStep: boolean;
+  currentStage: Stage | null;
+  stages: Record<Stage, StageState>;
+  pendingConfirms: Stage[];
+  handoffs: Record<Stage, boolean>;
+  createdAt: string;
+  updatedAt: string;
+}
 
 interface Feature { id: string; name: string; priority: 'P0' | 'P1' | 'P2'; desc: string; }
 interface PRD {
@@ -31,50 +58,28 @@ interface Deploy {
   status: 'success' | 'failed';
 }
 
-/** 通用 SSE 流式调用：返回 { data, raw, error } */
-async function streamAgent(
-  url: string,
-  body: object,
-  onToken: (t: string) => void,
-  signal?: AbortSignal,
-): Promise<{ data?: unknown; raw: string; error?: string }> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  let rawAcc = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const events = buf.split('\n\n');
-    buf = events.pop() ?? '';
-    for (const ev of events) {
-      const lines = ev.split('\n');
-      let evt = 'message';
-      let data = '';
-      for (const ln of lines) {
-        if (ln.startsWith('event:')) evt = ln.slice(6).trim();
-        else if (ln.startsWith('data:')) data += ln.slice(5).trim();
-      }
-      if (evt === 'token') {
-        rawAcc += JSON.parse(data);
-        onToken(rawAcc);
-      } else if (evt === 'done') {
-        const r = JSON.parse(data);
-        return { data: r.prd || r.design || r.codegen || r.deploy, raw: r.raw ?? rawAcc, error: r.error };
-      } else if (evt === 'error') {
-        return { raw: rawAcc, error: JSON.parse(data).message };
-      }
-    }
+const STAGE_LABEL: Record<Stage, string> = {
+  requirement: '需求拆解',
+  design: '方案设计',
+  codegen: '代码生成',
+  deploy: '部署发布',
+};
+
+const STAGES: Stage[] = ['requirement', 'design', 'codegen', 'deploy'];
+
+function emptyTokens(): Record<Stage, string> {
+  return { requirement: '', design: '', codegen: '', deploy: '' };
+}
+
+/** 后端 StageStatus → 前端 Status */
+function toStatus(s?: StageStatus): Status {
+  switch (s) {
+    case 'running': return 'running';
+    case 'done': return 'done';
+    case 'failed': return 'error';
+    case 'waiting_confirm': return 'waiting_confirm';
+    default: return 'pending';
   }
-  return { raw: rawAcc };
 }
 
 export default function StudioPage() {
@@ -90,143 +95,225 @@ export default function StudioPage() {
 
 function StudioPageInner() {
   const [requirement, setRequirement] = useState('做一个团队待办事项应用，支持任务指派和看板');
-  const [reqStatus, setReqStatus] = useState<Status>('pending');
-  const [prd, setPrd] = useState<PRD | null>(null);
-  const [designStatus, setDesignStatus] = useState<Status>('pending');
-  const [design, setDesign] = useState<Design | null>(null);
-  const [codegenStatus, setCodegenStatus] = useState<Status>('pending');
-  const [codegen, setCodegen] = useState<Codegen | null>(null);
-  const [deployStatus, setDeployStatus] = useState<Status>('pending');
-  const [deploy, setDeploy] = useState<Deploy | null>(null);
-  const [streaming, setStreaming] = useState('');
-  const [activeStage, setActiveStage] = useState<Stage | null>(null);
+  const [confirmMode, setConfirmMode] = useState(true);
+  const [doc, setDoc] = useState<PipelineDoc | null>(null);
+  const [tokens, setTokens] = useState<Record<Stage, string>>(emptyTokens());
+  const [busy, setBusy] = useState<Record<Stage, boolean>>({ requirement: false, design: false, codegen: false, deploy: false });
+  const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
-  const abortRef = useRef<AbortController | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const docIdRef = useRef<string | null>(null);
 
-  function resetDownstream(from: Stage) {
-    if (from === 'requirement') {
-      setPrd(null); setReqStatus('pending');
-      setDesign(null); setDesignStatus('pending');
-      setCodegen(null); setCodegenStatus('pending');
-      setDeploy(null); setDeployStatus('pending');
-    } else if (from === 'design') {
-      setDesign(null); setDesignStatus('pending');
-      setCodegen(null); setCodegenStatus('pending');
-      setDeploy(null); setDeployStatus('pending');
-    } else if (from === 'codegen') {
-      setCodegen(null); setCodegenStatus('pending');
-      setDeploy(null); setDeployStatus('pending');
-    } else if (from === 'deploy') {
-      setDeploy(null); setDeployStatus('pending');
-    }
-  }
+  /** 订阅 SSE 进度流。后端事件见 pipeline.controller.ts */
+  const subscribe = useCallback((id: string) => {
+    esRef.current?.close();
+    const es = new EventSource(`/api/pipeline/${id}/events`);
+    esRef.current = es;
+    docIdRef.current = id;
+    sessionStorage.setItem('apploom:lastPipeline', id);
+    setError('');
+    setConnected(true);
 
-  async function runRequirement() {
-    if (!requirement.trim() || reqStatus === 'running') return;
-    setActiveStage('requirement');
-    resetDownstream('requirement'); setError(''); setStreaming('');
-    setReqStatus('running');
-    const ac = new AbortController(); abortRef.current = ac;
+    // 兼容连接时直接推 doc 与 { doc } 两种形态
+    const parseDoc = (e: MessageEvent): PipelineDoc => {
+      const data = JSON.parse(e.data);
+      return (data?.doc ?? data) as PipelineDoc;
+    };
+
+    es.addEventListener('snapshot', (e) => setDoc(parseDoc(e as MessageEvent)));
+    es.addEventListener('stage', (e) => {
+      const { stage, status, summary } = JSON.parse((e as MessageEvent).data) as {
+        stage: Stage; status: StageStatus; summary?: unknown;
+      };
+      setDoc((prev) => prev ? {
+        ...prev,
+        stages: {
+          ...prev.stages,
+          [stage]: { ...prev.stages[stage], status, summary: summary ?? prev.stages[stage].summary },
+        },
+      } : prev);
+    });
+    es.addEventListener('token', (e) => {
+      const { stage, token } = JSON.parse((e as MessageEvent).data) as { stage: Stage; token: string };
+      setTokens((prev) => ({ ...prev, [stage]: prev[stage] + token }));
+    });
+    es.addEventListener('job', (e) => {
+      const { status } = JSON.parse((e as MessageEvent).data);
+      setDoc((prev) => prev ? { ...prev, status } : prev);
+    });
+    es.addEventListener('done', (e) => {
+      const { doc } = JSON.parse((e as MessageEvent).data);
+      setDoc(doc);
+      setConnected(false);
+      es.close();
+    });
+    es.addEventListener('pipeline-error', (e) => {
+      const { stage, message } = JSON.parse((e as MessageEvent).data);
+      setError(`阶段「${STAGE_LABEL[stage as Stage]}」失败：${message}`);
+    });
+
+    // 原生连接错误：EventSource 会自动重连（心跳兜底），仅提示
+    es.onerror = () => setConnected(false);
+  }, []);
+
+  /** 创建异步任务并订阅进度 */
+  async function start() {
+    if (!requirement.trim()) return;
+    setDoc(null);
+    setTokens(emptyTokens());
+    setError('');
     try {
-      const r = await streamAgent('/api/prd/generate', { requirement }, (t) => setStreaming(t), ac.signal);
-      if (r.error) { setReqStatus('error'); setError(r.error); setStreaming(r.raw); }
-      else { setPrd(r.data as PRD); setReqStatus('done'); }
+      const res = await fetch('/api/pipeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirement, confirmEachStep: confirmMode }),
+      });
+      if (!res.ok) { setError(await res.text()); return; }
+      const { id } = await res.json();
+      subscribe(id);
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') { setReqStatus('error'); setError((e as Error).message); }
+      setError((e as Error).message);
     }
   }
 
-  async function runDesign() {
-    if (!prd || designStatus === 'running') return;
-    setActiveStage('design');
-    resetDownstream('design'); setError(''); setStreaming('');
-    setDesignStatus('running');
-    const ac = new AbortController(); abortRef.current = ac;
+  /** 逐步确认：放行下一阶段 */
+  async function confirmStage(stage: Stage) {
+    const id = docIdRef.current;
+    if (!id) return;
+    setBusy((prev) => ({ ...prev, [stage]: true }));
     try {
-      const r = await streamAgent('/api/prd/design', { prd }, (t) => setStreaming(t), ac.signal);
-      if (r.error) { setDesignStatus('error'); setError(r.error); setStreaming(r.raw); }
-      else { setDesign(r.data as Design); setDesignStatus('done'); }
+      const res = await fetch(`/api/pipeline/${id}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage }),
+      });
+      if (!res.ok) setError(await res.text());
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') { setDesignStatus('error'); setError((e as Error).message); }
+      setError((e as Error).message);
+    } finally {
+      setBusy((prev) => ({ ...prev, [stage]: false }));
     }
   }
 
-  async function runCodegen() {
-    if (!design || codegenStatus === 'running') return;
-    setActiveStage('codegen');
-    resetDownstream('codegen'); setError(''); setStreaming('');
-    setCodegenStatus('running');
-    const ac = new AbortController(); abortRef.current = ac;
+  /** 失败重试：不传 stage 则重试失败的阶段 */
+  async function retryStage(stage?: Stage) {
+    const id = docIdRef.current;
+    if (!id) return;
+    const target = stage ?? STAGES.find((s) => doc?.stages[s].status === 'failed');
+    if (!target) return;
+    setBusy((prev) => ({ ...prev, [target]: true }));
     try {
-      const r = await streamAgent('/api/prd/codegen', { design }, (t) => setStreaming(t), ac.signal);
-      if (r.error) { setCodegenStatus('error'); setError(r.error); setStreaming(r.raw); }
-      else { setCodegen(r.data as Codegen); setCodegenStatus('done'); }
+      const res = await fetch(`/api/pipeline/${id}/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: target }),
+      });
+      if (!res.ok) setError(await res.text());
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') { setCodegenStatus('error'); setError((e as Error).message); }
+      setError((e as Error).message);
+    } finally {
+      setBusy((prev) => ({ ...prev, [target]: false }));
     }
   }
 
-  async function runDeploy() {
-    if (!codegen || deployStatus === 'running') return;
-    setActiveStage('deploy');
-    resetDownstream('deploy'); setError(''); setStreaming('');
-    setDeployStatus('running');
-    const ac = new AbortController(); abortRef.current = ac;
-    try {
-      const r = await streamAgent('/api/prd/deploy', { codegen }, (t) => setStreaming(t), ac.signal);
-      if (r.error) { setDeployStatus('error'); setError(r.error); setStreaming(r.raw); }
-      else { setDeploy(r.data as Deploy); setDeployStatus('done'); }
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') { setDeployStatus('error'); setError((e as Error).message); }
-    }
+  /** 断开订阅（任务仍在后台执行，仅停止实时跟踪） */
+  function disconnect() {
+    esRef.current?.close();
+    esRef.current = null;
+    docIdRef.current = null;
+    sessionStorage.removeItem('apploom:lastPipeline');
+    setDoc(null);
+    setTokens(emptyTokens());
+    setConnected(false);
+    setError('已断开实时连接，任务仍在后台执行。');
   }
 
-  function stop() {
-    abortRef.current?.abort();
-    if (reqStatus === 'running') setReqStatus('pending');
-    if (designStatus === 'running') setDesignStatus('pending');
-    if (codegenStatus === 'running') setCodegenStatus('pending');
-    if (deployStatus === 'running') setDeployStatus('pending');
-    setActiveStage(null);
-  }
+  // 挂载时恢复上次未完成的任务（页面刷新后能续上）
+  useEffect(() => {
+    const id = sessionStorage.getItem('apploom:lastPipeline');
+    if (!id) return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/pipeline/${id}`);
+        if (!res.ok) { sessionStorage.removeItem('apploom:lastPipeline'); return; }
+        const d = (await res.json()) as PipelineDoc;
+        if (d.status === 'completed') {
+          setDoc(d);
+          sessionStorage.removeItem('apploom:lastPipeline');
+        } else {
+          setDoc(d);
+          subscribe(id);
+        }
+      } catch { /* 后端没起来时静默跳过 */ }
+    })();
+    return () => esRef.current?.close();
+  }, [subscribe]);
 
-  const isRunning = reqStatus === 'running' || designStatus === 'running' || codegenStatus === 'running' || deployStatus === 'running';
-  const showStream = activeStage && isRunning;
+  // ===== 派生状态 =====
+  const statusOf = (s: Stage): Status => toStatus(doc?.stages[s]?.status);
+  const isRunning = doc?.status === 'running';
+  const isWaiting = doc?.status === 'waiting_confirm';
+  const isFailed = doc?.status === 'failed';
+  const isCompleted = doc?.status === 'completed';
+  const activeStage = doc?.currentStage ?? null;
+  const activeRunning = activeStage !== null && statusOf(activeStage) === 'running';
+  const streaming = activeStage ? tokens[activeStage] : '';
 
+  const prd = doc?.stages.requirement.result as PRD | undefined;
+  const design = doc?.stages.design.result as Design | undefined;
+  const codegen = doc?.stages.codegen.result as Codegen | undefined;
+  const deploy = doc?.stages.deploy.result as Deploy | undefined;
+
+  const canStart = !doc || isCompleted || isFailed;
   const previewLabel = deploy ? 'DeployDocument' : codegen ? 'CodegenDocument' : design ? 'DesignDocument' : prd ? 'PRD' : '待生成';
+  const showStream = activeRunning;
 
   return (
     <div className="page">
       <header className="topbar">
         <span className="logo">🚀 AppLoom · Studio</span>
-        <span className="sub">生产端 · 4-Agent 流水线</span>
+        <span className="sub">
+          生产端 · 异步 4-Agent 流水线（BullMQ + SSE）
+          {connected && <span style={{ color: '#10b981', marginLeft: 6 }}>● 实时连接</span>}
+        </span>
       </header>
 
-      {/* 全宽 Loading Banner —— 绝对显眼 */}
-      {isRunning && (
-        <div style={{
-          padding: '14px 24px', background: 'linear-gradient(90deg, #3b82f6, #2563eb)',
-          color: '#fff', fontSize: 15, fontWeight: 600, textAlign: 'center',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-          boxShadow: '0 2px 8px rgba(59,130,246,0.4)', position: 'sticky', top: 0, zIndex: 100,
-          animation: 'studio-pulse-bg 1.5s ease-in-out infinite',
-        }}>
-          <span style={{
-            width: 20, height: 20, border: '3px solid rgba(255,255,255,0.4)', borderTopColor: '#fff',
-            borderRadius: '50%', display: 'inline-block', flexShrink: 0,
-            animation: 'studio-spin 0.8s linear infinite',
-          }} />
-          <span>
-            ⏳ 正在生成 <b style={{ marginLeft: 4 }}>
-              {activeStage === 'requirement' ? '需求拆解' : activeStage === 'design' ? '方案设计' : activeStage === 'codegen' ? '代码生成' : activeStage === 'deploy' ? '部署发布' : ''}
-            </b>
-            · 已接收 <b style={{ marginLeft: 4 }}>{streaming.length}</b> 字符
-          </span>
-          <button onClick={stop} style={{
-            marginLeft: 12, padding: '4px 12px', background: 'rgba(255,255,255,0.2)',
-            border: '1px solid rgba(255,255,255,0.4)', borderRadius: 6, color: '#fff',
-            fontSize: 12, cursor: 'pointer', fontWeight: 500,
-          }}>停止</button>
+      {/* 全宽状态 Banner */}
+      {doc && (
+        <div className={`banner ${isWaiting ? 'banner-wait' : isFailed ? 'banner-fail' : isCompleted ? 'banner-done' : 'banner-run'}`}>
+          {isRunning && (
+            <>
+              <span className="banner-spin" />
+              <span>
+                ⏳ 正在生成 <b style={{ marginLeft: 4 }}>{activeStage ? STAGE_LABEL[activeStage] : '流水线'}</b>
+                · 已接收 <b style={{ marginLeft: 4 }}>{streaming.length}</b> 字符
+              </span>
+              <button className="banner-btn" onClick={disconnect}>断开</button>
+            </>
+          )}
+          {isWaiting && (
+            <>
+              <span>⏸ 等待确认：<b>{activeStage ? STAGE_LABEL[activeStage] : ''}</b> 已完成</span>
+              <button
+                className="banner-btn banner-btn-confirm"
+                onClick={() => activeStage && confirmStage(activeStage)}
+                disabled={!activeStage || busy[activeStage]}
+              >
+                {activeStage
+                  ? `确认继续 → ${STAGE_LABEL[STAGES[Math.min(STAGES.indexOf(activeStage) + 1, STAGES.length - 1)]]}`
+                  : '确认'}
+              </button>
+            </>
+          )}
+          {isFailed && (
+            <>
+              <span>✗ 流水线失败：<b>{activeStage ? STAGE_LABEL[activeStage] : ''}</b></span>
+              <button className="banner-btn banner-btn-retry" onClick={() => retryStage()} disabled={busy[activeStage ?? 'requirement']}>
+                重试失败阶段
+              </button>
+            </>
+          )}
+          {isCompleted && <span>✓ 全部完成 —— 4 个 Agent 已产出完整交付物</span>}
         </div>
       )}
 
@@ -240,146 +327,74 @@ function StudioPageInner() {
               placeholder="例如：做一个团队待办事项应用，支持任务指派和看板"
               value={requirement}
               onChange={(e) => setRequirement(e.target.value)}
+              disabled={!canStart}
             />
             <div className="row">
-              {isRunning ? (
-                <button className="btn btn-stop" onClick={stop}>停止</button>
-              ) : (
-                <button className="btn btn-primary" onClick={runRequirement} disabled={!requirement.trim()}>
-                  {reqStatus === 'done' ? '重新生成 PRD' : '生成 PRD →'}
-                </button>
-              )}
+              <button className="btn btn-primary" onClick={start} disabled={!canStart || !requirement.trim()}>
+                {doc && isCompleted ? '重新生成' : '生成 PRD →'}
+              </button>
+              <label className="confirm-toggle">
+                <input
+                  type="checkbox"
+                  checked={confirmMode}
+                  onChange={(e) => setConfirmMode(e.target.checked)}
+                  disabled={!canStart}
+                />
+                逐步确认（每步暂停等你确认）
+              </label>
             </div>
-            {isRunning && (
-              <div style={{
-                marginTop: 12, padding: '12px 14px', background: '#eff6ff',
-                border: '2px solid #3b82f6', borderRadius: 10, fontSize: 13, color: '#1e40af',
-                display: 'flex', alignItems: 'center', gap: 10, fontWeight: 500,
-              }}>
-                <span style={{
-                  width: 18, height: 18, border: '3px solid #bfdbfe', borderTopColor: '#3b82f6',
-                  borderRadius: '50%', display: 'inline-block', flexShrink: 0,
-                  animation: 'studio-spin 0.8s linear infinite',
-                }} />
-                <span>
-                  ◐ 正在执行：<b>{activeStage === 'requirement' ? '需求拆解' : activeStage === 'design' ? '方案设计' : activeStage === 'codegen' ? '代码生成' : activeStage === 'deploy' ? '部署发布' : ''}</b>
-                  · 已接收 <b>{streaming.length}</b> 字符
-                </span>
+            {isRunning && activeStage && (
+              <div className="run-hint">
+                <span className="banner-spin" />
+                <span>◐ 正在执行：<b>{STAGE_LABEL[activeStage]}</b> · 已接收 <b>{streaming.length}</b> 字符</span>
+              </div>
+            )}
+            {isWaiting && activeStage && (
+              <div className="run-hint wait-hint">
+                <span>⏸ <b>{STAGE_LABEL[activeStage]}</b> 已完成，点击卡片或上方按钮确认继续</span>
               </div>
             )}
           </section>
 
           <div className="pipeline">
-            {/* Stage 1: 需求拆解 */}
-            <div className={`stage stage-${reqStatus}`}>
-              <div className="stage-head">
-                <span className="stage-num">{statusIcon(reqStatus, 1)}</span>
-                <span className="stage-title">需求拆解</span>
-                <span className={`badge badge-${reqStatus}`}>{statusLabel(reqStatus)}</span>
-              </div>
-              {reqStatus === 'running' && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#3b82f6' }}>
-                  ◐ 已接收 {streaming.length} 字符…
-                </div>
-              )}
-              {prd && (
-                <div className="stage-body">
-                  <div className="meta-row">
-                    <span>功能 {prd.features.length}</span>
-                    <span>P0 {prd.features.filter((f) => f.priority === 'P0').length}</span>
-                    <span>假设 {prd.assumptions.length}</span>
-                    <span>实体 {prd.entities.length}</span>
+            {STAGES.map((stage, i) => {
+              const st = statusOf(stage);
+              const stageState = doc?.stages[stage];
+              return (
+                <div key={stage}>
+                  <div className={`stage stage-${st}`}>
+                    <div className="stage-head">
+                      <span className="stage-num">{statusIcon(st, i + 1)}</span>
+                      <span className="stage-title">{STAGE_LABEL[stage]}</span>
+                      <span className={`badge badge-${st}`}>{statusLabel(st)}</span>
+                    </div>
+                    {st === 'running' && <StageLoading stage={stage} streaming={tokens[stage]} />}
+                    {st === 'waiting_confirm' && (
+                      <div className="stage-body">
+                        <div className="confirm-box">
+                          <span>✅ 本阶段已完成，确认后进入下一阶段</span>
+                          <button className="btn btn-confirm" onClick={() => confirmStage(stage)} disabled={busy[stage]}>
+                            {busy[stage] ? '确认中…' : '确认继续 →'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {st === 'error' && (
+                      <div className="stage-body">
+                        <div className="confirm-box fail-box">
+                          <span>❌ {stageState?.error || '执行失败'}</span>
+                          <button className="btn btn-retry" onClick={() => retryStage(stage)} disabled={busy[stage]}>
+                            {busy[stage] ? '重试中…' : '重试该阶段'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {stageMeta(stage, prd, design, codegen, deploy)}
                   </div>
-                  {reqStatus === 'done' && designStatus === 'pending' && (
-                    <button className="btn btn-next" onClick={runDesign}>下一步 → 方案设计</button>
-                  )}
+                  {i < STAGES.length - 1 && <div className="connector" />}
                 </div>
-              )}
-            </div>
-
-            <div className="connector" />
-
-            {/* Stage 2: 方案设计 */}
-            <div className={`stage stage-${designStatus}`}>
-              <div className="stage-head">
-                <span className="stage-num">{statusIcon(designStatus, 2)}</span>
-                <span className="stage-title">方案设计</span>
-                <span className={`badge badge-${designStatus}`}>{statusLabel(designStatus)}</span>
-              </div>
-              {designStatus === 'running' && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#3b82f6' }}>
-                  ◐ 已接收 {streaming.length} 字符…
-                </div>
-              )}
-              {design && (
-                <div className="stage-body">
-                  <div className="techstack">
-                    {design.techStack.map((t) => <span key={t} className="tk">{t}</span>)}
-                  </div>
-                  <div className="meta-row">
-                    <span>页面 {design.pageTree.length}</span>
-                    <span>实体 {design.dataModels.length}</span>
-                    <span>API {design.apis.length}</span>
-                  </div>
-                  {designStatus === 'done' && codegenStatus === 'pending' && (
-                    <button className="btn btn-next" onClick={runCodegen}>下一步 → 代码生成</button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="connector" />
-
-            {/* Stage 3: 代码生成 */}
-            <div className={`stage stage-${codegenStatus}`}>
-              <div className="stage-head">
-                <span className="stage-num">{statusIcon(codegenStatus, 3)}</span>
-                <span className="stage-title">代码生成</span>
-                <span className={`badge badge-${codegenStatus}`}>{statusLabel(codegenStatus)}</span>
-              </div>
-              {codegenStatus === 'running' && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#3b82f6' }}>
-                  ◐ 已接收 {streaming.length} 字符…
-                </div>
-              )}
-              {codegen && (
-                <div className="stage-body">
-                  <div className="meta-row">
-                    <span>文件 {codegen.files.length}</span>
-                    <span>依赖 {codegen.dependencies.length}</span>
-                    <span>注意 {codegen.notes.length}</span>
-                  </div>
-                  {codegenStatus === 'done' && deployStatus === 'pending' && (
-                    <button className="btn btn-next" onClick={runDeploy}>下一步 → 部署发布</button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="connector" />
-
-            {/* Stage 4: 部署发布 */}
-            <div className={`stage stage-${deployStatus}`}>
-              <div className="stage-head">
-                <span className="stage-num">{statusIcon(deployStatus, 4)}</span>
-                <span className="stage-title">部署发布</span>
-                <span className={`badge badge-${deployStatus}`}>{statusLabel(deployStatus)}</span>
-              </div>
-              {deployStatus === 'running' && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#3b82f6' }}>
-                  ◐ 已接收 {streaming.length} 字符…
-                </div>
-              )}
-              {deploy && (
-                <div className="stage-body">
-                  <div className="meta-row">
-                    <span>目标 {deploy.target === 'cloud' ? '云托管' : 'Git 导出'}</span>
-                    <span className={deploy.status === 'success' ? 'ok' : 'fail'}>{deploy.status === 'success' ? '✓ 成功' : '✗ 失败'}</span>
-                  </div>
-                  {deploy.url && <a className="deploy-url" href={deploy.url} target="_blank" rel="noopener noreferrer">{deploy.url}</a>}
-                </div>
-              )}
-            </div>
+              );
+            })}
           </div>
 
           {error && <div className="err">⚠ {error}</div>}
@@ -401,16 +416,8 @@ function StudioPageInner() {
           <div className="pv-body">
             {showStream ? (
               <div>
-                <div style={{
-                  marginBottom: 12, padding: '10px 12px', background: '#eff6ff',
-                  borderRadius: 8, border: '1px solid #bfdbfe', fontSize: 12, color: '#3b82f6',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                }}>
-                  <span style={{
-                    width: 14, height: 14, border: '2px solid #bfdbfe', borderTopColor: '#3b82f6',
-                    borderRadius: '50%', display: 'inline-block', flexShrink: 0,
-                    animation: 'studio-spin 0.8s linear infinite',
-                  }} />
+                <div className="raw-banner">
+                  <span className="banner-spin" />
                   <span>生成中 · 已接收 {streaming.length} 字符</span>
                 </div>
                 <pre className="raw">
@@ -444,49 +451,76 @@ function StudioPageInner() {
         .lbl { font-size:12px; color:#6b7280; font-weight:600; }
         .ta { width:100%; min-height:80px; resize:vertical; padding:10px 12px; border:1px solid #e5e7eb; border-radius:8px; font-size:14px; line-height:1.6; font-family:inherit; box-sizing:border-box; }
         .ta:focus { outline:none; border-color:#3b82f6; box-shadow:0 0 0 3px #eff6ff; }
-        .row { display:flex; gap:8px; }
+        .row { display:flex; gap:8px; align-items:center; }
         .btn { border:none; border-radius:8px; padding:8px 16px; font-size:13px; cursor:pointer; font-weight:500; }
         .btn-primary { background:#3b82f6; color:#fff; }
         .btn-primary:hover { background:#2563eb; }
         .btn-primary:disabled { background:#d1d5db; cursor:not-allowed; }
-        .btn-stop { background:#ef4444; color:#fff; }
-        .btn-next { background:#10b981; color:#fff; }
-        .btn-next:hover { background:#059669; }
+        .btn-confirm { background:#f59e0b; color:#fff; }
+        .btn-confirm:hover { background:#d97706; }
+        .btn-confirm:disabled { background:#d1d5db; cursor:not-allowed; }
+        .btn-retry { background:#ef4444; color:#fff; }
+        .btn-retry:hover { background:#dc2626; }
+        .btn-retry:disabled { background:#d1d5db; cursor:not-allowed; }
+        .confirm-toggle { margin-left:8px; font-size:12px; color:#6b7280; display:flex; align-items:center; gap:6px; cursor:pointer; }
+        .confirm-toggle input { accent-color:#3b82f6; }
+
+        .banner { padding:14px 24px; color:#fff; font-size:15px; font-weight:600; text-align:center; display:flex; align-items:center; justify-content:center; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,0.12); position:sticky; top:0; z-index:100; }
+        .banner-run { background:linear-gradient(90deg,#3b82f6,#2563eb); }
+        .banner-wait { background:linear-gradient(90deg,#f59e0b,#d97706); }
+        .banner-fail { background:linear-gradient(90deg,#ef4444,#dc2626); }
+        .banner-done { background:linear-gradient(90deg,#10b981,#059669); }
+        .banner-spin { width:18px; height:18px; border:3px solid rgba(255,255,255,0.4); border-top-color:#fff; border-radius:50%; display:inline-block; flex-shrink:0; animation:studio-spin 0.8s linear infinite; }
+        .banner-btn { padding:6px 14px; border:1px solid rgba(255,255,255,0.5); background:rgba(255,255,255,0.15); border-radius:8px; color:#fff; font-size:13px; cursor:pointer; font-weight:600; }
+        .banner-btn:hover { background:rgba(255,255,255,0.3); }
+        .banner-btn:disabled { opacity:0.6; cursor:not-allowed; }
+        .banner-btn-confirm { background:#fff; color:#d97706; border-color:#fff; }
+        .banner-btn-confirm:hover { background:#fef3c7; }
+        .banner-btn-retry { background:#fff; color:#dc2626; border-color:#fff; }
+        .banner-btn-retry:hover { background:#fef2f2; }
+
+        .run-hint { margin-top:12px; padding:12px 14px; background:#eff6ff; border:2px solid #3b82f6; border-radius:10px; font-size:13px; color:#1e40af; display:flex; align-items:center; gap:10px; font-weight:500; }
+        .run-hint .banner-spin { width:16px; height:16px; border-width:2px; }
+        .wait-hint { background:#fffbeb; border-color:#f59e0b; color:#92400e; }
+        .raw-banner { margin-bottom:12px; padding:10px 12px; background:#eff6ff; border-radius:8px; border:1px solid #bfdbfe; font-size:12px; color:#3b82f6; display:flex; align-items:center; gap:8px; }
+        .raw-banner .banner-spin { width:14px; height:14px; border-width:2px; }
+
         .pipeline { display:flex; flex-direction:column; align-items:stretch; }
         .stage { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:14px 16px; }
         .stage-pending { opacity:0.6; }
         .stage-running { border-color:#3b82f6; box-shadow:0 0 0 3px #eff6ff; }
         .stage-done { border-color:#10b981; }
         .stage-error { border-color:#ef4444; }
+        .stage-waiting_confirm { border-color:#f59e0b; box-shadow:0 0 0 3px #fef3c7; }
         .stage-head { display:flex; align-items:center; gap:10px; }
         .stage-num { width:24px; height:24px; border-radius:50%; background:#f0f1f3; color:#6b7280; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; }
-        .stage-running .stage-num { background:#3b82f6; color:#fff; animation:spin 1.2s linear infinite; }
+        .stage-running .stage-num { background:#3b82f6; color:#fff; animation:studio-spin 1.2s linear infinite; }
         .stage-done .stage-num { background:#10b981; color:#fff; }
         .stage-error .stage-num { background:#ef4444; color:#fff; }
-        @keyframes spin { to { transform:rotate(360deg); } }
-        @keyframes studio-spin { to { transform:rotate(360deg); } }
-        @keyframes studio-blink { 0%,50% { opacity:1; } 51%,100% { opacity:0; } }
-        @keyframes studio-pulse-bg { 0%,100% { background:linear-gradient(90deg, #3b82f6, #2563eb); } 50% { background:linear-gradient(90deg, #60a5fa, #3b82f6); } }
-        .studio-cursor-blink { display:inline-block; color:#3b82f6; animation:studio-blink 1s step-end infinite; }
+        .stage-waiting_confirm .stage-num { background:#f59e0b; color:#fff; }
         .stage-title { font-weight:600; font-size:14px; flex:1; }
         .badge { font-size:11px; padding:2px 8px; border-radius:999px; }
         .badge-pending { background:#f0f1f3; color:#6b7280; }
         .badge-running { background:#eff6ff; color:#3b82f6; }
         .badge-done { background:#ecfdf5; color:#10b981; }
         .badge-error { background:#fef2f2; color:#ef4444; }
+        .badge-waiting_confirm { background:#fef3c7; color:#f59e0b; }
         .stage-body { margin-top:10px; display:flex; flex-direction:column; gap:10px; }
+        .confirm-box { display:flex; align-items:center; justify-content:space-between; gap:10px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:12px; color:#92400e; }
+        .fail-box { background:#fef2f2; border-color:#fca5a5; color:#991b1b; }
         .meta-row { display:flex; gap:16px; font-size:12px; color:#6b7280; }
         .meta-row .ok { color:#10b981; font-weight:600; }
         .meta-row .fail { color:#ef4444; font-weight:600; }
         .techstack { display:flex; flex-wrap:wrap; gap:6px; }
         .tk { font-size:11px; padding:3px 8px; background:#eff6ff; color:#3b82f6; border-radius:6px; border:1px solid #93c5fd; }
         .connector { width:2px; height:20px; background:#e5e7eb; margin-left:24px; align-self:flex-start; }
-        .deploy-url { font-size:12px; color:#3b82f6; text-decoration:none; word-break:break-all; }
-        .deploy-url:hover { text-decoration:underline; }
         .err { font-size:12px; color:#ef4444; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:10px 12px; }
+
         .preview { width:400px; background:#fff; border-left:1px solid #e5e7eb; display:flex; flex-direction:column; flex-shrink:0; }
         .pv-header { display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid #e5e7eb; font-size:14px; font-weight:600; }
         .pv-sub { font-size:12px; color:#9ca3af; font-weight:400; }
+        .studio-pv-streaming { display:inline-flex; align-items:center; gap:6px; color:#3b82f6; }
+        .studio-dot-pulse { width:8px; height:8px; border-radius:50%; background:#3b82f6; display:inline-block; animation:studio-blink 1s step-end infinite; }
         .pv-body { flex:1; overflow-y:auto; padding:16px 18px; }
         .ph { color:#9ca3af; font-size:13px; line-height:1.7; }
         .raw { font-family:'SF Mono',monospace; font-size:11px; white-space:pre-wrap; word-break:break-all; color:#374151; margin:0; line-height:1.6; }
@@ -508,20 +542,79 @@ function StudioPageInner() {
         .deploy-success { color:#10b981; font-weight:600; }
         .deploy-failed { color:#ef4444; font-weight:600; }
         .build-log { font-family:'SF Mono',monospace; font-size:11px; background:#1a1a2e; color:#a7f3d0; border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-all; }
+
+        @keyframes studio-spin { to { transform:rotate(360deg); } }
+        @keyframes studio-blink { 0%,50% { opacity:1; } 51%,100% { opacity:0; } }
       `}</style>
     </div>
   );
 }
 
 function statusLabel(s: Status) {
-  return { pending: '待执行', running: '生成中', done: '已完成', error: '失败' }[s];
+  return { pending: '待执行', running: '生成中', done: '已完成', error: '失败', waiting_confirm: '待确认' }[s];
 }
 
 function statusIcon(s: Status, num: number) {
   if (s === 'done') return '✓';
   if (s === 'running') return '◐';
   if (s === 'error') return '✕';
+  if (s === 'waiting_confirm') return '⏸';
   return num;
+}
+
+/** 各阶段卡片摘要行（数据来自后端 doc.stages[stage].result） */
+function stageMeta(stage: Stage, prd?: PRD, design?: Design, codegen?: Codegen, deploy?: Deploy) {
+  if (stage === 'requirement' && prd) {
+    return (
+      <div className="stage-body">
+        <div className="meta-row">
+          <span>功能 {prd.features.length}</span>
+          <span>P0 {prd.features.filter((f) => f.priority === 'P0').length}</span>
+          <span>假设 {prd.assumptions.length}</span>
+          <span>实体 {prd.entities.length}</span>
+        </div>
+      </div>
+    );
+  }
+  if (stage === 'design' && design) {
+    return (
+      <div className="stage-body">
+        <div className="techstack">
+          {design.techStack.map((t) => <span key={t} className="tk">{t}</span>)}
+        </div>
+        <div className="meta-row">
+          <span>页面 {design.pageTree.length}</span>
+          <span>实体 {design.dataModels.length}</span>
+          <span>API {design.apis.length}</span>
+        </div>
+      </div>
+    );
+  }
+  if (stage === 'codegen' && codegen) {
+    return (
+      <div className="stage-body">
+        <div className="meta-row">
+          <span>文件 {codegen.files.length}</span>
+          <span>依赖 {codegen.dependencies.length}</span>
+          <span>注意 {codegen.notes.length}</span>
+        </div>
+      </div>
+    );
+  }
+  if (stage === 'deploy' && deploy) {
+    return (
+      <div className="stage-body">
+        <div className="meta-row">
+          <span>目标 {deploy.target === 'cloud' ? '云托管' : 'Git 导出'}</span>
+          <span className={deploy.status === 'success' ? 'ok' : 'fail'}>
+            {deploy.status === 'success' ? '✓ 成功' : '✗ 失败'}
+          </span>
+          {deploy.url && <a className="deploy-url" href={deploy.url} target="_blank" rel="noopener noreferrer">{deploy.url}</a>}
+        </div>
+      </div>
+    );
+  }
+  return null;
 }
 
 const STAGE_STEPS: Record<Stage, string[]> = {
@@ -548,10 +641,9 @@ function StageLoading({ stage, streaming }: { stage: Stage; streaming: string })
         }} />
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {steps.map((s, i) => {
-            const cls = i < progress ? 'studio-step-done' : i === progress ? 'studio-step-active' : 'studio-step-pending';
             const color = i < progress ? '#10b981' : i === progress ? '#3b82f6' : '#9ca3af';
             return (
-              <div key={s} className={`studio-step ${cls}`} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color }}>
+              <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color }}>
                 <span style={{ width: 14, textAlign: 'center' }}>
                   {i < progress ? '✓' : i === progress ? '●' : '○'}
                 </span>
