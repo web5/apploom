@@ -75,8 +75,8 @@ export class PipelineController {
       res.write(`event: error\ndata: ${JSON.stringify({ message: 'pipeline 不存在' })}\n\n`);
       return res.end();
     }
-    // 连接时先推当前快照，避免错过已发生的状态
-    res.write(`event: snapshot\ndata: ${JSON.stringify(doc)}\n\n`);
+    // 连接时先推当前快照，避免错过已发生的状态（与 emitSnapshot 统一为 { doc } 形态）
+    res.write(`event: snapshot\ndata: ${JSON.stringify({ doc })}\n\n`);
 
     const unsubscribe = this.pipeline.subscribe(id, (event) => {
       let eventName = 'message';

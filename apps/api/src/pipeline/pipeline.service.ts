@@ -131,9 +131,16 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       d.status = 'running';
       d.currentStage = next;
     });
+    await this.emitSnapshot(id);
     await this.enqueueStage(id, next);
     this.bus.emit(id, { type: 'job', status: 'running' });
     return true;
+  }
+
+  /** 推一次完整快照，让前端同步 currentStage 等字段（job 事件只带 status，不含 currentStage） */
+  private async emitSnapshot(id: string): Promise<void> {
+    const doc = await this.store.get(id);
+    if (doc) this.bus.emit(id, { type: 'snapshot', doc });
   }
 
   /** 失败重试：把 failed 阶段重置为 pending 重新入队，其余已产出保留 */
@@ -159,6 +166,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       d.status = 'running';
       d.currentStage = target;
     });
+    await this.emitSnapshot(id);
     await this.enqueueStage(id, target);
     this.bus.emit(id, { type: 'job', status: 'running' });
     return true;
@@ -214,6 +222,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       d.status = 'running';
       d.currentStage = stage;
     });
+    await this.emitSnapshot(id);
     await this.enqueueStage(id, stage);
     this.bus.emit(id, { type: 'job', status: 'running' });
     return true;
@@ -243,6 +252,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         d.stages[stage].startedAt = new Date().toISOString();
         d.stages[stage].attempts += 1;
       });
+      await this.emitSnapshot(docId);
       this.bus.emit(docId, { type: 'stage', stage, status: 'running' });
 
       let result: StageRunResult;
