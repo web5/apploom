@@ -7,7 +7,7 @@
  */
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
-import { PipelineDoc } from './pipeline.types';
+import { PIPELINE_STAGES, PipelineDoc, PipelineDocSummary } from './pipeline.types';
 
 const DOC_KEY_PREFIX = 'pipeline:doc:';
 
@@ -59,6 +59,42 @@ export class PipelineStore implements OnModuleDestroy {
 
   async remove(id: string): Promise<void> {
     await this.redis.del(docKey(id));
+  }
+
+  /** 列出所有历史项目摘要（SCAN 遍历，按 updatedAt 倒序，不含大字段） */
+  async list(): Promise<PipelineDocSummary[]> {
+    const keys: string[] = [];
+    let cursor = '0';
+    do {
+      const [next, batch] = await this.redis.scan(cursor, 'MATCH', `${DOC_KEY_PREFIX}*`, 'COUNT', 100);
+      cursor = next;
+      keys.push(...batch);
+    } while (cursor !== '0');
+
+    if (keys.length === 0) return [];
+
+    const raws = await this.redis.mget(...keys);
+    const docs: PipelineDoc[] = [];
+    for (const raw of raws) {
+      if (!raw) continue;
+      try {
+        docs.push(JSON.parse(raw) as PipelineDoc);
+      } catch {
+        // 跳过损坏文档
+      }
+    }
+
+    docs.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+
+    return docs.map((d) => ({
+      id: d.id,
+      requirement: d.requirement,
+      status: d.status,
+      currentStage: d.currentStage,
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt,
+      stages: Object.fromEntries(PIPELINE_STAGES.map((s) => [s, d.stages[s]?.status ?? 'pending'])) as PipelineDocSummary['stages'],
+    }));
   }
 
   async onModuleDestroy(): Promise<void> {

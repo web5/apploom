@@ -31,6 +31,16 @@ interface PipelineDoc {
   updatedAt: string;
 }
 
+interface PipelineDocSummary {
+  id: string;
+  requirement: string;
+  status: PipelineStatus;
+  currentStage: Stage | null;
+  createdAt: string;
+  updatedAt: string;
+  stages: Record<Stage, StageStatus>;
+}
+
 interface Feature { id: string; name: string; priority: 'P0' | 'P1' | 'P2'; desc: string; }
 interface PRD {
   overview: string; targetUsers: string[]; features: Feature[];
@@ -103,6 +113,8 @@ function StudioPageInner() {
   const [repairText, setRepairText] = useState('');
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
+  const [history, setHistory] = useState<PipelineDocSummary[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const docIdRef = useRef<string | null>(null);
 
@@ -260,6 +272,43 @@ function StudioPageInner() {
     setError('已断开实时连接，任务仍在后台执行。');
   }
 
+  /** 加载历史项目列表 */
+  async function loadHistory() {
+    try {
+      const res = await fetch('/api/pipeline');
+      if (!res.ok) { setError(await res.text()); return; }
+      const { items } = await res.json();
+      setHistory(items as PipelineDocSummary[]);
+      setShowHistory(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  /** 打开历史项目：加载完整 doc；未完成则重新订阅，已完成仅展示 */
+  function openHistory(id: string) {
+    esRef.current?.close();
+    (async () => {
+      try {
+        const res = await fetch(`/api/pipeline/${id}`);
+        if (!res.ok) { setError(await res.text()); return; }
+        const d = (await res.json()) as PipelineDoc;
+        setDoc(d);
+        setTokens(emptyTokens());
+        setShowHistory(false);
+        docIdRef.current = id;
+        sessionStorage.setItem('apploom:lastPipeline', id);
+        if (d.status === 'completed' || d.status === 'failed') {
+          setConnected(false);
+        } else {
+          subscribe(id);
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    })();
+  }
+
   // 挂载时恢复上次未完成的任务（页面刷新后能续上）
   useEffect(() => {
     const id = sessionStorage.getItem('apploom:lastPipeline');
@@ -327,7 +376,39 @@ function StudioPageInner() {
           生产端 · 异步 4-Agent 流水线（BullMQ + SSE）
           {connected && <span style={{ color: '#10b981', marginLeft: 6 }}>● 实时连接</span>}
         </span>
+        <button className="btn btn-ghost" onClick={loadHistory}>📚 历史项目</button>
       </header>
+
+      {/* 历史项目面板 */}
+      {showHistory && (
+        <div className="history-overlay" onClick={() => setShowHistory(false)}>
+          <div className="history-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="history-head">
+              <span>📚 历史项目（{history.length}）</span>
+              <button className="btn btn-ghost" onClick={() => setShowHistory(false)}>关闭</button>
+            </div>
+            <div className="history-list">
+              {history.length === 0 && <p className="ph">还没有历史项目</p>}
+              {history.map((h) => (
+                <div key={h.id} className="history-item" onClick={() => openHistory(h.id)}>
+                  <div className="history-item-head">
+                    <span className="history-req">{h.requirement}</span>
+                    <span className={`badge badge-${pipelineBadge(h.status)}`}>{pipelineStatusLabel(h.status)}</span>
+                  </div>
+                  <div className="history-item-meta">
+                    <span>{new Date(h.updatedAt).toLocaleString()}</span>
+                    <span className="history-steps">
+                      {STAGES.map((s) => (
+                        <i key={s} className={`dot dot-${toStatus(h.stages[s])}`} title={`${STAGE_LABEL[s]}: ${statusLabel(toStatus(h.stages[s]))}`} />
+                      ))}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 全宽状态 Banner */}
       {doc && (
@@ -514,7 +595,22 @@ function StudioPageInner() {
         .page { height:100vh; display:flex; flex-direction:column; background:#f7f8fa; color:#1a1a2e; font-family:-apple-system,'PingFang SC',sans-serif; }
         .topbar { display:flex; align-items:center; justify-content:space-between; padding:12px 24px; background:#fff; border-bottom:1px solid #e5e7eb; }
         .logo { font-weight:700; font-size:15px; }
-        .sub { font-size:12px; color:#9ca3af; }
+        .sub { font-size:12px; color:#9ca3af; flex:1; }
+        .history-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:flex-start; justify-content:center; padding-top:80px; z-index:200; }
+        .history-panel { width:560px; max-height:70vh; background:#fff; border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,0.2); display:flex; flex-direction:column; overflow:hidden; }
+        .history-head { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid #e5e7eb; font-size:14px; font-weight:600; }
+        .history-list { flex:1; overflow-y:auto; padding:8px; }
+        .history-item { padding:12px 14px; border-radius:10px; cursor:pointer; border:1px solid transparent; }
+        .history-item:hover { background:#f8fafc; border-color:#e2e8f0; }
+        .history-item-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .history-req { font-size:13px; font-weight:600; color:#1a1a2e; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .history-item-meta { display:flex; align-items:center; justify-content:space-between; margin-top:8px; font-size:11px; color:#9ca3af; }
+        .history-steps { display:flex; gap:4px; }
+        .dot { width:8px; height:8px; border-radius:50%; background:#e5e7eb; display:inline-block; }
+        .dot-done { background:#10b981; }
+        .dot-running { background:#3b82f6; }
+        .dot-error { background:#ef4444; }
+        .dot-waiting_confirm { background:#f59e0b; }
         .layout { flex:1; display:flex; overflow:hidden; }
         .main { flex:1; overflow-y:auto; padding:24px; display:flex; flex-direction:column; gap:16px; max-width:680px; }
         .input-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:10px; }
@@ -632,6 +728,16 @@ function StudioPageInner() {
 
 function statusLabel(s: Status) {
   return { pending: '待执行', running: '生成中', done: '已完成', error: '失败', waiting_confirm: '待确认' }[s];
+}
+
+/** 任务整体状态 → 中文标签 */
+function pipelineStatusLabel(s: PipelineStatus) {
+  return { created: '待执行', running: '进行中', waiting_confirm: '待确认', failed: '失败', completed: '已完成' }[s];
+}
+
+/** 任务整体状态 → 前端 badge 样式类 */
+function pipelineBadge(s: PipelineStatus): Status {
+  return ({ created: 'pending', running: 'running', waiting_confirm: 'waiting_confirm', failed: 'error', completed: 'done' } as Record<PipelineStatus, Status>)[s];
 }
 
 function statusIcon(s: Status, num: number) {

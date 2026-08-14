@@ -109,6 +109,18 @@ export type PipelineEvent =
   | { type: 'done'; doc: PipelineDoc }
   | { type: 'error'; stage: PipelineStage; message: string };
 
+/** 历史项目列表摘要（不含大字段 result/raw/history） */
+export interface PipelineDocSummary {
+  id: string;
+  requirement: string;
+  status: PipelineStatus;
+  currentStage: PipelineStage | null;
+  createdAt: string;
+  updatedAt: string;
+  /** 各阶段状态快照 */
+  stages: Record<PipelineStage, StageStatus>;
+}
+
 export const PIPELINE_STAGES: PipelineStage[] = ['requirement', 'design', 'codegen', 'deploy'];
 
 /** 阶段中文名（前端展示用） */

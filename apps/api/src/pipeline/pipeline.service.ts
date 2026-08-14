@@ -26,6 +26,7 @@ import { PipelineStore } from './pipeline.store';
 import {
   PIPELINE_STAGES,
   PipelineDoc,
+  PipelineDocSummary,
   PipelineEvent,
   PipelineStage,
   createPipelineDoc,
@@ -98,6 +99,10 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
   get(id: string): Promise<PipelineDoc | null> {
     return this.store.get(id);
+  }
+
+  list(): Promise<PipelineDocSummary[]> {
+    return this.store.list();
   }
 
   /** SSE 订阅进度事件；返回取消函数 */

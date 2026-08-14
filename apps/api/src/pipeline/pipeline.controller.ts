@@ -34,6 +34,13 @@ import { PipelineService } from './pipeline.service';
 export class PipelineController {
   constructor(private readonly pipeline: PipelineService) {}
 
+  /** 历史项目列表（摘要，按更新时间倒序） */
+  @Get()
+  async list(@Res() res: Response) {
+    const items = await this.pipeline.list();
+    res.json({ items });
+  }
+
   /** 创建异步任务：立即返回 jobId，后台 Worker 开始执行 */
   @Post()
   async create(
