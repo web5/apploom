@@ -521,13 +521,20 @@ function StudioPageInner() {
                       <div className="stage-body">
                         <div className="confirm-box fail-box">
                           <span>❌ {stageState?.error || '执行失败'}</span>
-                          <button className="btn btn-retry" onClick={() => retryStage(stage)} disabled={busy[stage]}>
-                            {busy[stage] ? '重试中…' : '重试'}
-                          </button>
-                          <button className="btn btn-ai-fix" onClick={() => repairStage(stage)} disabled={busy[stage]}>
-                            {busy[stage] ? '修复中…' : 'AI 修复'}
-                          </button>
+                          <div className="row">
+                            <button className="btn btn-edit" onClick={() => {
+                              // 失败时默认用 error 信息作为反馈预填，用户可改或留空
+                              setRepairOpen(repairOpen === stage ? null : stage);
+                              setRepairText(stageState?.error ?? '');
+                            }}>
+                              ✏ 修改
+                            </button>
+                            <button className="btn btn-retry" onClick={() => retryStage(stage)} disabled={busy[stage]}>
+                              {busy[stage] ? '重试中…' : '重试'}
+                            </button>
+                          </div>
                         </div>
+                        {repairOpen === stage && repairEntry(stage)}
                       </div>
                     )}
                     {st === 'done' && (
