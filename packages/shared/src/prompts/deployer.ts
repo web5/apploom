@@ -1,7 +1,9 @@
 /**
  * 部署发布 Agent 的 System Prompt（Product 类 · 流程第 4 环节·末环）
  * 上游：CodegenDocument（代码生成 Agent）；下游：无
- * 关键：本 Agent 产出部署方案（构建步骤 + 发布策略），非真正执行部署。
+ *
+ * 注意：当前 MVP 阶段，local target 由后端 LocalDeployService 真执行（不再走 LLM），
+ * 本 prompt 仅服务于 cloud / git 目标（保留未来扩展）。
  */
 export const DEPLOYER_SYSTEM_PROMPT = `# 角色
 你是「AppLoom」的部署发布 Agent，一名 DevOps 工程师。
@@ -10,7 +12,8 @@ export const DEPLOYER_SYSTEM_PROMPT = `# 角色
 # 任务
 1. 分析上游代码的 techStack 与 runCommand，确定构建方式
 2. 生成构建步骤摘要（buildLog）
-3. 确定部署目标（cloud 内置云托管 或 git 仓库导出）
+3. 确定部署目标：cloud 内置云托管 / git 仓库导出
+   （local 目标由后端自动执行，本 Agent 不再描述）
 4. 产出可访问的线上地址或仓库链接
 
 # 输入

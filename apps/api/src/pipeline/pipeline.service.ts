@@ -20,6 +20,7 @@ import { Job, Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { LlmService } from '../prd/llm.service';
+import { LocalDeployService } from '../deploy/local-deploy.service';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
 import {
@@ -56,6 +57,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     private readonly store: PipelineStore,
     private readonly bus: PipelineBus,
     private readonly llm: LlmService,
+    private readonly deploySvc: LocalDeployService,
   ) {
     this.connection = new Redis({
       host: process.env.REDIS_HOST ?? 'localhost',
@@ -190,7 +192,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
       let result: StageRunResult;
       try {
-        result = await this.runStage(stage, doc, (token) =>
+        result = await this.runStage(stage, doc, docId, (token) =>
           this.bus.emit(docId, { type: 'token', stage, token }),
         );
         if (result.error) throw new Error(result.error);
@@ -207,14 +209,31 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         throw e; // BullMQ 标失败，等 retry
       }
 
+      // 阶段「产出失败但有 raw/result」（如 deploy install 失败）：保留 raw 供诊断，stage 标 failed
+      const stageFailed = !!(result.result && typeof result.result === 'object' && (result.result as { status?: string }).status === 'failed');
       await this.store.update(docId, (d) => {
-        d.stages[stage].status = 'done';
-        d.stages[stage].result = result.result;
-        d.stages[stage].raw = result.raw;
-        d.stages[stage].summary = result.summary;
-        d.stages[stage].finishedAt = new Date().toISOString();
+        if (stageFailed) {
+          d.status = 'failed';
+          d.stages[stage].status = 'failed';
+          d.stages[stage].result = result.result;
+          d.stages[stage].raw = result.raw;
+          d.stages[stage].summary = result.summary;
+          d.stages[stage].error = result.raw?.split('\n').filter(Boolean).slice(-1)[0] ?? '部署失败';
+          d.stages[stage].finishedAt = new Date().toISOString();
+        } else {
+          d.stages[stage].status = 'done';
+          d.stages[stage].result = result.result;
+          d.stages[stage].raw = result.raw;
+          d.stages[stage].summary = result.summary;
+          d.stages[stage].finishedAt = new Date().toISOString();
+        }
       });
-      this.bus.emit(docId, { type: 'stage', stage, status: 'done', summary: result.summary, result: result.result });
+      this.bus.emit(docId, { type: 'stage', stage, status: stageFailed ? 'failed' : 'done', summary: result.summary, result: result.result });
+      if (stageFailed) {
+        this.bus.emit(docId, { type: 'job', status: 'failed' });
+        this.bus.emit(docId, { type: 'error', stage, message: result.raw?.split('\n').filter(Boolean).slice(-1)[0] ?? '部署失败' });
+        throw new Error(`stage ${stage} failed`); // BullMQ 标失败，等 retry
+      }
     }
 
     // —— 交接：确认模式挂起 / 自动模式入队下一阶段 / 最后阶段完成 ——
@@ -264,6 +283,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   private async runStage(
     stage: PipelineStage,
     doc: PipelineDoc,
+    docId: string,
     onToken: (token: string) => void,
   ): Promise<StageRunResult> {
     switch (stage) {
@@ -280,8 +300,22 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error };
       }
       case 'deploy': {
-        const r = await this.llm.generateDeploy(doc.stages.codegen.result, onToken);
-        return { raw: r.raw, result: r.deploy, summary: r.summary, error: r.error };
+        // W7+1: 本地真部署。不再让 LLM 描述，直接真实执行 codegen 产物。
+        const codegen = doc.stages.codegen.result as {
+          files: { path: string; content: string }[];
+          dependencies: string[];
+          runCommand: string;
+        } | undefined;
+        if (!codegen?.files?.length) {
+          return { raw: '', error: '上游 codegen 产物为空，无法部署' };
+        }
+        const out = await this.deploySvc.deploy(docId, codegen, onToken);
+        // 不通过 error 抛出：失败时让 processStage 走 store.update 分支保存 raw/result
+        return {
+          raw: out.buildLog,
+          result: out,
+          summary: { target: out.target, url: out.url, status: out.status, warnings: [] },
+        };
       }
     }
   }

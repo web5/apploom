@@ -1,0 +1,211 @@
+/**
+ * LocalDeployService —— W7+1 本地真部署 MVP
+ *
+ * 不再让 LLM 描述部署，而是真实执行 codegen 产物：
+ *   1) 写代码到 /tmp/apploom-deploy/{docId}/
+ *   2) 跑 install（npm / pnpm / yarn 自适应）
+ *   3) 后台启动 dev server（detached child process）
+ *   4) 解析 stdout 抓本地 URL（vite / next / webpack-dev-server 等）
+ *
+ * 安全边界：
+ *   - 写盘路径白名单：所有文件必须在 ROOT/{docId} 下
+ *   - install timeout 5 分钟
+ *   - dev server 启动后 30 秒内未解析到 URL 则标 failed
+ *
+ * 设计取舍：
+ *   - 不做 sandbox（chroot / docker / seccomp）：MVP 范围，依赖路径白名单 + npm 命令白名单
+ *   - 不做 stop API（用户重启 API 即可清理所有 dev server 子进程）
+ *   - 不并发限制（先跑通，跑挂再调）
+ */
+import { Injectable, Logger } from '@nestjs/common';
+import { spawn } from 'node:child_process';
+import { promises as fs, existsSync } from 'node:fs';
+import * as path from 'node:path';
+
+export type DeployStatus = 'success' | 'failed';
+
+export interface DeployOutput {
+  target: 'local';
+  url: string;
+  repoUrl: '';
+  buildLog: string;
+  status: DeployStatus;
+}
+
+/** 识别 package manager（看 lockfile 与 runCommand） */
+function detectPackageManager(
+  cwd: string,
+  runCommand: string,
+): { name: 'pnpm' | 'npm' | 'yarn'; installCmd: string[] } {
+  if (existsSync(path.join(cwd, 'pnpm-lock.yaml'))) return { name: 'pnpm', installCmd: ['pnpm', 'install', '--prefer-offline'] };
+  if (existsSync(path.join(cwd, 'yarn.lock'))) return { name: 'yarn', installCmd: ['yarn', 'install'] };
+  if (existsSync(path.join(cwd, 'package-lock.json'))) return { name: 'npm', installCmd: ['npm', 'install', '--no-audit', '--no-fund'] };
+  // 兜底：看 runCommand 关键词
+  if (/pnpm/.test(runCommand)) return { name: 'pnpm', installCmd: ['pnpm', 'install', '--prefer-offline'] };
+  if (/yarn/.test(runCommand)) return { name: 'yarn', installCmd: ['yarn', 'install'] };
+  return { name: 'npm', installCmd: ['npm', 'install', '--no-audit', '--no-fund'] };
+}
+
+/** 跑命令，捕获 stdout/stderr，timeout 兜底 */
+function runCmd(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  onLog: (line: string) => void,
+  timeoutMs: number,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    onLog(`$ ${cmd} ${args.join(' ')}`);
+    const child = spawn(cmd, args, {
+      cwd,
+      shell: false,
+      env: { ...process.env, CI: '1', ADBLOCK: '1' },
+    });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`命令执行超时 ${timeoutMs / 1000}s: ${cmd} ${args.join(' ')}`));
+    }, timeoutMs);
+
+    child.stdout?.on('data', (b) => onLog(b.toString().replace(/\n$/, '')));
+    child.stderr?.on('data', (b) => onLog(b.toString().replace(/\n$/, '')));
+
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
+  });
+}
+
+/** 从 dev server stdout 中解析本地 URL（vite / next / webpack-dev-server 等通用正则） */
+function parseLocalUrl(text: string): string | null {
+  // 先去 ANSI 转义码（vite 会用 \u001b[36m...\u001b[1m5178\u001b[22m 把 URL 切开）
+  const clean = text.replace(/\u001b\[[0-9;]*m/g, '');
+  const m = clean.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}/);
+  return m ? m[0].replace('0.0.0.0', 'localhost') : null;
+}
+
+/** 写盘：所有文件必须在 ROOT/{docId} 下（防 codegen 输出 ../../etc/passwd 之类） */
+const ROOT = '/tmp/apploom-deploy';
+
+async function writeFiles(
+  docId: string,
+  files: { path: string; content: string }[],
+  onLog: (line: string) => void,
+): Promise<string> {
+  const root = path.join(ROOT, docId);
+  const realRoot = await fs.realpath(root).catch(() => root);
+  for (const f of files) {
+    const fp = path.resolve(realRoot, f.path);
+    if (!fp.startsWith(realRoot + path.sep) && fp !== realRoot) {
+      throw new Error(`越界路径: ${f.path}（必须位于 ${realRoot} 下）`);
+    }
+    await fs.mkdir(path.dirname(fp), { recursive: true });
+    await fs.writeFile(fp, f.content, 'utf-8');
+  }
+  onLog(`[write] ${files.length} 个文件 → ${realRoot}`);
+  return realRoot;
+}
+
+@Injectable()
+export class LocalDeployService {
+  private readonly logger = new Logger(LocalDeployService.name);
+
+  async deploy(
+    docId: string,
+    codegen: {
+      files: { path: string; content: string }[];
+      dependencies: string[];
+      runCommand: string;
+    },
+    onProgress: (chunk: string) => void,
+  ): Promise<DeployOutput> {
+    const log: string[] = [];
+    const writeLog = (line: string) => {
+      log.push(line);
+    };
+    /** 只推「关键节点」给 SSE，避免高频输出撑爆流（install/dev 的细节都进 buildLog） */
+    const step = (line: string) => onProgress(line);
+
+    step('═══ 本地真部署开始 ═══');
+
+    // 1) 写盘
+    const root = await writeFiles(docId, codegen.files, writeLog);
+    step(`[write] ✓ ${codegen.files.length} 个文件已写入 ${root}`);
+
+    // 2) 跑 install（如果 codegen 生成了 package.json 才 install；纯静态站跳过）
+    if (existsSync(path.join(root, 'package.json'))) {
+      const pm = detectPackageManager(root, codegen.runCommand);
+      step(`[install] ${pm.installCmd[0]} · ${codegen.dependencies.length} 个依赖（最多 5 分钟）`);
+      const installCode = await runCmd(pm.installCmd[0], pm.installCmd.slice(1), root, writeLog, 5 * 60 * 1000);
+      if (installCode !== 0) {
+        writeLog(`[install] ✕ 退出码 ${installCode}`);
+        step(`[install] ✕ 退出码 ${installCode}`);
+        return {
+          target: 'local',
+          url: '',
+          repoUrl: '',
+          buildLog: log.join('\n'),
+          status: 'failed',
+        };
+      }
+      step('[install] ✓ 依赖安装完成');
+    } else {
+      step('[install] - 无 package.json，跳过依赖安装（纯静态产物）');
+    }
+
+    // 3) 启动 dev server（detached，后台跑）
+    step(`[dev] 启动 ${codegen.runCommand}（解析 URL 等待 30s）`);
+    // 把 runCommand 解析成 cmd + args（简单按空格切，MVP 不处理引号转义）
+    const tokens = codegen.runCommand.trim().split(/\s+/);
+    const devCmd = tokens[0];
+    const devArgs = tokens.slice(1);
+    const dev = spawn(devCmd, devArgs, {
+      cwd: root,
+      shell: false,
+      detached: true, // 独立进程组，便于清理
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, BROWSER: 'none', CI: '0' },
+    });
+    dev.unref();
+    this.logger.log(`dev server pid=${dev.pid} docId=${docId}`);
+
+    // 4) 解析 URL（30s 内未解析则判 failed）
+    const url = await new Promise<string>((resolve) => {
+      const timer = setTimeout(() => resolve(''), 30 * 1000);
+      let captured = '';
+      const collect = (b: Buffer) => {
+        const text = b.toString();
+        captured += text;
+        log.push(text.trimEnd());
+        const u = parseLocalUrl(captured);
+        if (u) {
+          clearTimeout(timer);
+          resolve(u);
+          return;
+        }
+      };
+      dev.stdout?.on('data', collect);
+      dev.stderr?.on('data', collect);
+      dev.on('exit', (code) => {
+        clearTimeout(timer);
+        this.logger.warn(`[dev exit] code=${code} captured[${captured.length}]`);
+        resolve('');
+      });
+    });
+
+    if (url) {
+      step(`[dev] ✓ URL: ${url}`);
+      step('═══ 部署完成 ═══');
+      writeLog(`\n[dev] URL: ${url}`);
+      return { target: 'local', url, repoUrl: '', buildLog: log.join('\n'), status: 'success' };
+    }
+    step('[dev] ✕ 30s 内未解析到本地 URL');
+    writeLog('[dev] ✕ 30s 内未解析到本地 URL');
+    return { target: 'local', url: '', repoUrl: '', buildLog: log.join('\n'), status: 'failed' };
+  }
+}

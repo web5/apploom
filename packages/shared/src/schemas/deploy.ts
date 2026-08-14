@@ -6,8 +6,8 @@ import { z } from 'zod';
  * 字段以 docs/notes/prompt/agents/deploy.md 为准。
  */
 export const DeploySchema = z.object({
-  /** 部署目标：内置云托管 | Git 仓库导出 */
-  target: z.enum(['cloud', 'git']),
+  /** 部署目标：本地真部署 | 内置云托管 | Git 仓库导出 */
+  target: z.enum(['local', 'cloud', 'git']),
   /** 可访问的线上地址（云托管时） */
   url: z.string(),
   /** Git 仓库链接（导出时，无则为空串） */
@@ -24,8 +24,8 @@ export type DeployDocument = z.infer<typeof DeploySchema>;
 export const DEPLOY_JSON_SCHEMA = {
   type: 'object',
   properties: {
-    target: { type: 'string', enum: ['cloud', 'git'], description: '部署目标' },
-    url: { type: 'string', description: '可访问的线上地址（云托管时）' },
+    target: { type: 'string', enum: ['local', 'cloud', 'git'], description: '部署目标' },
+    url: { type: 'string', description: '可访问的线上地址（云托管 / 本地时）' },
     repoUrl: { type: 'string', description: 'Git 仓库链接（导出时，无则为空串）' },
     buildLog: { type: 'string', description: '构建日志摘要' },
     status: { type: 'string', enum: ['success', 'failed'], description: '部署状态' },

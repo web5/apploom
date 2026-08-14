@@ -51,7 +51,7 @@ interface Codegen {
   notes: string[];
 }
 interface Deploy {
-  target: 'cloud' | 'git';
+  target: 'local' | 'cloud' | 'git';
   url: string;
   repoUrl: string;
   buildLog: string;
@@ -767,7 +767,7 @@ function DeployView({ deploy }: { deploy: Deploy }) {
         </p>
       </section>
       <section><h4>部署目标</h4>
-        <p>{deploy.target === 'cloud' ? '☁ 内置云托管' : '📦 Git 仓库导出'}</p>
+        <p>{deploy.target === 'local' ? '💻 本地真部署（dev server 已启动）' : deploy.target === 'cloud' ? '☁ 内置云托管' : '📦 Git 仓库导出'}</p>
       </section>
       {deploy.url && (
         <section><h4>访问地址</h4>
