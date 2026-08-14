@@ -25,7 +25,19 @@
 ## 技术栈决策
 - 平台本身：TypeScript（Next.js 14 + NestJS 11 + Prisma + PostgreSQL）
 - LLM 网关：OpenAI 兼容适配层（DeepSeek + 混元 hy3），多 provider
-- 数据库：本机 Postgres.app（无 Docker）；Redis 待 Phase1 后期 Homebrew 装
+- 数据库：本机 Postgres.app（无 Docker）
+- Redis：已装（W7，源码编译 redis-7.4.10 → `~/.local/redis/bin/`，无 Homebrew；daemon 跑 6379，数据目录 `/tmp/apploom-redis`），用于 BullMQ 异步任务队列
+
+## W7 Agent 工程化关键架构（2026-08-14 完成，跨会话重要）
+- **链式 BullMQ job 设计**：每阶段一个独立 job（`pipeline:doc:{id}` 是唯一事实来源，状态存 Redis）。为什么不用「单 job 跑全流水线 + 进程内等待确认」？BullMQ job 锁 30s 检测，无限等待确认会触发 `job stalled` → failed。
+- **逐步确认**：阶段 job 完成后正常结束（不占队列），挂起状态只存在 Redis doc；`POST /confirm` 入队下一阶段 job。
+- **幂等交接**：`doc.handoffs[stage]` 标记「已完成交接」，job 崩溃重复执行直接跳过，避免链式重复入队；`maxStalledCount: 2`。
+- **断点续跑**：重试/崩溃后按 doc 状态续跑（上游产出保留），BullMQ job 只带 `{docId, stage}` 轻量数据。
+- **PipelineBus（EventEmitter）**：Worker 与 NestJS API 同进程，SSE token 级推送走进程内事件而非 Redis Pub/Sub。
+- **SSE 事件名**：业务错误用 `pipeline-error`，避开 EventSource 原生 `error` 连接事件冲突。
+- **BullMQ 坑**：队列名不能含 `:`；ioredis 需 `maxRetriesPerRequest: null`。
+- **前端**：Studio 用 EventSource 订阅 SSE（走 next rewrites `/api/*`），sessionStorage 存最近 pipeline id 支持刷新恢复；React 18 批处理下 token 累加用函数式 setState。
+- 验收：自动模式 4 阶段 completed、逐步确认挂起/放行、失败重试断点续跑 均已端到端验证。
 
 ## 用户偏好
 - 用户 techdog，熟练开发，正在学 AI Agent 开发（项目驱动）
