@@ -1,0 +1,16 @@
+{
+  "name": "@apploom/tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AppLoom Agent 基础能力层：文件读写 / 目录列举 / shell 执行，带沙箱分级与追加式调用日志（参考 DeepSeek Harness）",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "echo 'noop'"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.5.0"
+  }
+}

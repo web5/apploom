@@ -2,25 +2,28 @@
  * LocalDeployService —— W7+1 本地真部署 MVP
  *
  * 不再让 LLM 描述部署，而是真实执行 codegen 产物：
- *   1) 写代码到 /tmp/apploom-deploy/{docId}/
- *   2) 跑 install（npm / pnpm / yarn 自适应）
+ *   1) 写代码到 /tmp/apploom-deploy/{docId}/（走 @apploom/tools 的 write_file）
+ *   2) 跑 install（npm / pnpm / yarn 自适应，走 shell 工具）
  *   3) 后台启动 dev server（detached child process）
  *   4) 解析 stdout 抓本地 URL（vite / next / webpack-dev-server 等）
  *
  * 安全边界：
- *   - 写盘路径白名单：所有文件必须在 ROOT/{docId} 下
+ *   - 文件写入/命令执行全部委托 @apploom/tools 沙箱层（workspace-write 档位），
+ *     路径越界（../../etc/passwd）由 sandbox.ts 拒绝，不再在本文件手写校验
  *   - install timeout 5 分钟
  *   - dev server 启动后 30 秒内未解析到 URL 则标 failed
  *
  * 设计取舍：
- *   - 不做 sandbox（chroot / docker / seccomp）：MVP 范围，依赖路径白名单 + npm 命令白名单
+ *   - 不做 sandbox（chroot / docker / seccomp）：MVP 范围，依赖 tools 沙箱（路径白名单）
  *   - 不做 stop API（用户重启 API 即可清理所有 dev server 子进程）
  *   - 不并发限制（先跑通，跑挂再调）
+ *   - 端口检查（lsof/kill）是系统级运维细节，不属于 Agent 基础能力，保留本地实现
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { promises as fs, existsSync } from 'node:fs';
 import * as path from 'node:path';
+import { createDefaultRegistry } from '@apploom/tools';
 
 export type DeployStatus = 'success' | 'failed';
 
@@ -31,6 +34,9 @@ export interface DeployOutput {
   buildLog: string;
   status: DeployStatus;
 }
+
+/** 工具注册表（模块级单例：4 个基础工具 + 追加式调用日志） */
+const tools = createDefaultRegistry();
 
 /** 识别 package manager（看 lockfile 与 runCommand） */
 function detectPackageManager(
@@ -46,39 +52,24 @@ function detectPackageManager(
   return { name: 'npm', installCmd: ['npm', 'install', '--no-audit', '--no-fund'] };
 }
 
-/** 跑命令，捕获 stdout/stderr，timeout 兜底 */
-function runCmd(
+/**
+ * 跑命令（走 shell 工具，沙箱档位 workspace-write）。
+ * install 日志可能很长，放开输出上限到 1MB，保证 buildLog 完整。
+ */
+async function runCmd(
   cmd: string,
   args: string[],
   cwd: string,
   onLog: (line: string) => void,
   timeoutMs: number,
 ): Promise<number> {
-  return new Promise((resolve, reject) => {
-    onLog(`$ ${cmd} ${args.join(' ')}`);
-    const child = spawn(cmd, args, {
-      cwd,
-      shell: false,
-      env: { ...process.env, CI: '1', ADBLOCK: '1' },
-    });
-
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`命令执行超时 ${timeoutMs / 1000}s: ${cmd} ${args.join(' ')}`));
-    }, timeoutMs);
-
-    child.stdout?.on('data', (b) => onLog(b.toString().replace(/\n$/, '')));
-    child.stderr?.on('data', (b) => onLog(b.toString().replace(/\n$/, '')));
-
-    child.on('error', (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      resolve(code ?? 1);
-    });
-  });
+  onLog(`$ ${cmd} ${args.join(' ')}`);
+  const r = await tools.execute(
+    'shell',
+    { command: cmd, args, cwd, timeoutMs, maxOutputBytes: 1024 * 1024 },
+    { workspace: cwd, onLog },
+  );
+  return r.exitCode ?? 1;
 }
 
 /** 从 dev server stdout 中解析本地 URL（vite / next / webpack-dev-server 等通用正则） */
@@ -115,7 +106,7 @@ async function checkAndKillPort(port: number, onLog: (line: string) => void): Pr
   await new Promise((r) => setTimeout(r, 500));
 }
 
-/** 写盘：所有文件必须在 ROOT/{docId} 下（防 codegen 输出 ../../etc/passwd 之类） */
+/** 写盘（走 write_file 工具）：所有文件必须在 ROOT/{docId} 下（sandbox.ts 强制） */
 const ROOT = '/tmp/apploom-deploy';
 
 async function writeFiles(
@@ -123,18 +114,14 @@ async function writeFiles(
   files: { path: string; content: string }[],
   onLog: (line: string) => void,
 ): Promise<string> {
-  const root = path.join(ROOT, docId);
-  const realRoot = await fs.realpath(root).catch(() => root);
+  const workspace = path.join(ROOT, docId);
+  await fs.mkdir(workspace, { recursive: true });
   for (const f of files) {
-    const fp = path.resolve(realRoot, f.path);
-    if (!fp.startsWith(realRoot + path.sep) && fp !== realRoot) {
-      throw new Error(`越界路径: ${f.path}（必须位于 ${realRoot} 下）`);
-    }
-    await fs.mkdir(path.dirname(fp), { recursive: true });
-    await fs.writeFile(fp, f.content, 'utf-8');
+    const r = await tools.execute('write_file', { path: f.path, content: f.content }, { workspace, onLog });
+    if (!r.ok) throw new Error(r.error);
   }
-  onLog(`[write] ${files.length} 个文件 → ${realRoot}`);
-  return realRoot;
+  onLog(`[write] ${files.length} 个文件 → ${workspace}`);
+  return workspace;
 }
 
 @Injectable()
