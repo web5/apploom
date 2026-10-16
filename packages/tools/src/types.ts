@@ -52,6 +52,11 @@ export interface ToolContext {
    * 执行 LLM 生成的代码（install 脚本 / dev server）时必须显式传入最小环境，避免泄漏 API 进程里的密钥。
    */
   env?: Record<string, string | undefined>;
+  /**
+   * 命令包装器：shell 工具在 spawn 前把 (command, args) 交给它改写，用于套上 OS 级沙箱
+   * （如 macOS sandbox-exec、容器 exec）。缺省不包装。
+   */
+  wrap?: (cmd: { command: string; args: string[] }) => { command: string; args: string[] };
 }
 
 /** 工具结果：结构化为「人类可读 + LLM 可读」的输出，作为反馈循环的输入 */

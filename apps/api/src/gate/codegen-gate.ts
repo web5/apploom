@@ -18,7 +18,7 @@ import * as path from 'node:path';
 import { createDefaultRegistry, type Approver } from '@apploom/tools';
 import { ApprovalService } from '../approval/approval.service';
 import { detectPackageManager } from '../deploy/local-deploy.service';
-import { sandboxEnv } from '../sandbox/sandbox-env';
+import { sandboxContext } from '../sandbox/sandbox';
 
 export type GateMode = 'enforce' | 'warn' | 'off';
 export type GateCheck = 'structure' | 'install' | 'typecheck' | 'build';
@@ -219,7 +219,8 @@ export class CodegenGateService {
   }
 
   private async exec(command: string, args: string[], cwd: string, timeoutMs: number, approver: Approver) {
-    const r = await this.tools.execute('shell', { command, args, cwd, timeoutMs, maxOutputBytes: 256 * 1024 }, { workspace: cwd, approver, env: sandboxEnv() });
+    const sbx = sandboxContext(cwd);
+    const r = await this.tools.execute('shell', { command, args, cwd, timeoutMs, maxOutputBytes: 256 * 1024 }, { workspace: cwd, approver, env: sbx.env, wrap: sbx.wrap });
     const reason = r.error ?? `退出码 ${r.exitCode ?? '未知'}`;
     return { ok: r.ok, output: r.output || r.error || '', reason };
   }

@@ -27,7 +27,7 @@ import * as path from 'node:path';
 import { createDefaultRegistry, type ApprovalDecision, type Approver } from '@apploom/tools';
 import { ApprovalService } from '../approval/approval.service';
 import { assessRunCommand, isOwnDeployProcess } from '../approval/policy';
-import { sandboxEnv } from '../sandbox/sandbox-env';
+import { sandboxContext } from '../sandbox/sandbox';
 
 export type DeployStatus = 'success' | 'failed';
 
@@ -69,10 +69,11 @@ async function runCmd(
   approver: Approver,
 ): Promise<number> {
   onLog(`$ ${cmd} ${args.join(' ')}`);
+  const sbx = sandboxContext(cwd);
   const r = await tools.execute(
     'shell',
     { command: cmd, args, cwd, timeoutMs, maxOutputBytes: 1024 * 1024 },
-    { workspace: cwd, onLog, approver, env: sandboxEnv() },
+    { workspace: cwd, onLog, approver, env: sbx.env, wrap: sbx.wrap },
   );
   return r.exitCode ?? 1;
 }
@@ -239,13 +240,13 @@ export class LocalDeployService {
     step(`[dev] 启动 ${codegen.runCommand}（解析 URL 等待 30s）`);
     // 若 runCommand 含 shell 操作符（&& | ; 等），按空格拆会把这些字符当成参数。
     // 含元字符时改用 shell 执行（组合命令只能靠 shell 解析）；纯命令保持 shell:false 安全拆分。
-    // dev server 跑的是 LLM 生成的代码：只给最小环境，不继承 API 进程的密钥
-    const devEnv = sandboxEnv({ BROWSER: 'none', CI: '0' });
+    // dev server 跑的是 LLM 生成的代码：只给最小环境，并套上 OS 级沙箱（见 sandbox/）
+    const sbx = sandboxContext(root, { BROWSER: 'none', CI: '0' });
     const hasShellMeta = /[&|;<>]/.test(runCommand);
     const tokens = runCommand.split(/\s+/);
-    const dev = hasShellMeta
-      ? spawn(runCommand, { cwd: root, shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: devEnv })
-      : spawn(tokens[0], tokens.slice(1), { cwd: root, shell: false, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: devEnv });
+    const launch = hasShellMeta ? { command: '/bin/sh', args: ['-c', runCommand] } : { command: tokens[0], args: tokens.slice(1) };
+    const wrapped = sbx.wrap ? sbx.wrap(launch) : launch;
+    const dev = spawn(wrapped.command, wrapped.args, { cwd: root, shell: false, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: sbx.env });
     dev.unref();
     this.logger.log(`dev server pid=${dev.pid} docId=${docId}`);
 

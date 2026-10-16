@@ -72,8 +72,9 @@ export const shellTool: ToolDefinition<ShellInput> = {
     const maxOutputBytes = input.maxOutputBytes ?? 32 * 1024;
 
     return new Promise<ToolResult>((resolve) => {
+      const launch = ctx.wrap ? ctx.wrap({ command: input.command, args: input.args ?? [] }) : { command: input.command, args: input.args ?? [] };
       // detached：子进程自成进程组，超时 / 中止时才能连孙进程（npm 脚本里起的后台进程）一起杀掉
-      const child = spawn(input.command, input.args ?? [], {
+      const child = spawn(launch.command, launch.args, {
         cwd,
         shell: false,
         detached: true,

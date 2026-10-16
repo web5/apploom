@@ -16,7 +16,6 @@ const PASSTHROUGH = [
   'LC_ALL',
   'LC_CTYPE',
   'TZ',
-  'TMPDIR',
   // 代理与私有源：企业网络下 npm install 离不开它们（凭据若写在 URL 里属于使用者自己的选择）
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -59,5 +58,8 @@ export function sandboxEnv(extra: Record<string, string> = {}, source: NodeJS.Pr
   env.XDG_CACHE_HOME = path.join(home, '.cache');
   env.XDG_CONFIG_HOME = path.join(home, '.config');
   env.XDG_DATA_HOME = path.join(home, '.local/share');
+  // 不沿用宿主的 TMPDIR（/var/folders/…，同用户其它应用的临时文件也在那里）
+  env.TMPDIR = path.join(home, 'tmp');
+  mkdirSync(env.TMPDIR, { recursive: true });
   return { ...env, ...extra };
 }
