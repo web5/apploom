@@ -1,19 +1,38 @@
 import type { LLMProviderConfig } from './providers';
+import { LlmError, classifyError, classifyHttpStatus, retryPolicy, type ErrorClass } from './errors';
 
-/** 单次 LLM 调用日志（存 doc 供前端页面调试入口展示） */
+export interface LlmUsage {
+  promptTokens: number;
+  completionTokens: number;
+  /** true = 服务端没返回 usage，按字符数粗略估算 */
+  estimated?: boolean;
+}
+
+/** 单次 LLM 调用日志（存 doc 供前端调试入口展示，同时是 trace 的最小单元） */
 export interface LlmLogEntry {
   label: string;
   ts: string;
   /** user prompt（含 repair 反馈，是调试关键） */
   user: string;
-  /** 模型响应原文 */
+  /** 模型响应原文（失败时为已收到的部分内容） */
   response: string;
+  model?: string;
+  temperature?: number;
+  durationMs?: number;
+  usage?: LlmUsage;
+  /** 模型停止原因；'length' 表示被 max_tokens 截断 */
+  finishReason?: string;
+  /** 第几次尝试（0 = 首次，>0 = 网关自动重试） */
+  attempt?: number;
+  /** 本次调用失败时的错误类别与信息 */
+  errorClass?: ErrorClass;
+  error?: string;
 }
 
 export interface ChatOptions {
   /** 调用方标识（如 'generateDeploy'），日志里显示 */
   label?: string;
-  /** 日志回调：每次调用完成后，把 user prompt + response 回传 */
+  /** 日志回调：每次调用完成（成功或失败）后回传 */
   onLog?: (entry: LlmLogEntry) => void;
   system?: string;
   user: string;
@@ -24,25 +43,78 @@ export interface ChatOptions {
   onToken?: (token: string) => void;
   /** 结构化输出：传 JSON Schema，网关会尝试用 response_format 约束 */
   jsonSchema?: { name: string; schema: Record<string, unknown> };
+  /** 单次请求超时毫秒，默认 LLM_TIMEOUT_MS 或 300000 */
+  timeoutMs?: number;
+  /** transient 错误的最大自动重试次数，默认 LLM_MAX_RETRIES 或 2 */
+  maxRetries?: number;
 }
 
 export interface ChatResult {
   content: string;
-  usage?: { promptTokens: number; completionTokens: number };
+  usage?: LlmUsage;
+  finishReason?: string;
 }
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/** 没有服务端 usage 时的粗略估算（中英混合约 3 字符 / token） */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * 最小 LLM 网关：OpenAI 兼容 /chat/completions
  * - 支持流式（SSE）与非流式
  * - 支持结构化输出（json_schema 或 json_object 回退）
+ * - 请求超时；transient 错误指数退避重试（流式已开始输出后不重试，避免重复推送）
+ * - 失败抛 LlmError（带错误类别）
  */
 export async function chat(config: LLMProviderConfig, options: ChatOptions): Promise<ChatResult> {
+  const policy = retryPolicy('transient');
+  const maxRetries = options.maxRetries ?? envInt('LLM_MAX_RETRIES', policy.retries);
+
+  let emitted = false;
+  const wrapped: ChatOptions = {
+    ...options,
+    onToken: options.onToken
+      ? (t) => {
+          emitted = true;
+          options.onToken!(t);
+        }
+      : undefined,
+  };
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await chatOnce(config, wrapped, attempt);
+    } catch (e) {
+      if (classifyError(e) === 'transient' && !emitted && attempt < maxRetries) {
+        const wait = policy.backoffMs * 2 ** attempt + Math.floor(Math.random() * 250);
+        console.error(`[LLM:${options.label ?? ''}] transient 错误，${wait}ms 后重试（${attempt + 1}/${maxRetries}）: ${(e as Error).message}`);
+        await sleep(wait);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+async function chatOnce(config: LLMProviderConfig, options: ChatOptions, attempt: number): Promise<ChatResult> {
   const tag = options.label ? `[LLM:${options.label}]` : '[LLM]';
+  const label = options.label ?? 'llm';
+  const timeoutMs = options.timeoutMs ?? envInt('LLM_TIMEOUT_MS', 300_000);
+  const started = Date.now();
 
   // —— 请求侧日志（便于调试 prompt / 反馈是否正确传入）——
-  // 截断避免超长污染终端，但保留完整可追溯性
   const trunc = (s: string, n = 800) => (s.length > n ? `${s.slice(0, n)}…(+${s.length - n} chars)` : s);
-  console.error(`${tag} → model=${config.model} temp=${options.temperature ?? 0.7} stream=${!!options.stream}${options.jsonSchema ? ` schema=${options.jsonSchema.name}` : ''}`);
+  console.error(`${tag} → model=${config.model} temp=${options.temperature ?? 0.7} stream=${!!options.stream}${options.jsonSchema ? ` schema=${options.jsonSchema.name}` : ''}${attempt ? ` attempt=${attempt}` : ''}`);
   console.error(`${tag} → system: ${trunc(options.system ?? '(none)', 500)}`);
   console.error(`${tag} → user: ${trunc(options.user, 1500)}`);
 
@@ -57,6 +129,7 @@ export async function chat(config: LLMProviderConfig, options: ChatOptions): Pro
     stream: !!options.stream,
   };
   if (options.maxTokens) body.max_tokens = options.maxTokens;
+  if (options.stream && config.streamUsage) body.stream_options = { include_usage: true };
 
   if (options.jsonSchema) {
     if (config.supportsJsonSchema) {
@@ -70,67 +143,97 @@ export async function chat(config: LLMProviderConfig, options: ChatOptions): Pro
     }
   }
 
-  const url = `${config.baseURL.replace(/\/$/, '')}/chat/completions`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const promptText = `${options.system ?? ''}${options.user}`;
+  let content = '';
+  let usage: LlmUsage | undefined;
+  let finishReason: string | undefined;
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`LLM 请求失败 ${res.status}: ${text}`);
-  }
+  const emitLog = (extra: Partial<LlmLogEntry> = {}) =>
+    options.onLog?.({
+      label,
+      ts: new Date().toISOString(),
+      user: options.user,
+      response: content,
+      model: config.model,
+      temperature: options.temperature ?? 0.7,
+      durationMs: Date.now() - started,
+      usage: usage ?? { promptTokens: estimateTokens(promptText), completionTokens: estimateTokens(content), estimated: true },
+      finishReason,
+      attempt,
+      ...extra,
+    });
 
-  // 流式
-  if (options.stream && options.onToken) {
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let content = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        const t = line.trim();
-        if (!t.startsWith('data:')) continue;
-        const data = t.slice(5).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const json = JSON.parse(data);
-          const delta: string | undefined = json.choices?.[0]?.delta?.content;
-          if (delta) {
-            content += delta;
-            options.onToken(delta);
+  try {
+    const url = `${config.baseURL.replace(/\/$/, '')}/chat/completions`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new LlmError(`LLM 请求失败 ${res.status}: ${text}`, classifyHttpStatus(res.status), res.status);
+    }
+
+    if (options.stream && options.onToken) {
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith('data:')) continue;
+          const data = t.slice(5).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const json = JSON.parse(data);
+            const choice = json.choices?.[0];
+            const delta: string | undefined = choice?.delta?.content;
+            if (delta) {
+              content += delta;
+              options.onToken(delta);
+            }
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
+            if (json.usage) {
+              usage = { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0 };
+            }
+          } catch {
+            // 忽略不完整分片
           }
-        } catch {
-          // 忽略不完整分片
         }
       }
+      console.error(`${tag} ← stream done, total=${content.length} chars finish=${finishReason ?? '?'}: ${trunc(content, 600)}`);
+      emitLog();
+      return { content, usage, finishReason };
     }
-    console.error(`${tag} ← stream done, total=${content.length} chars: ${trunc(content, 600)}`);
-    options.onLog?.({ label: options.label ?? 'llm', ts: new Date().toISOString(), user: options.user, response: content });
-    return { content };
-  }
 
-  // 非流式
-  const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
-  const resultContent = json.choices?.[0]?.message?.content ?? '';
-  console.error(`${tag} ← ${resultContent.length} chars: ${trunc(resultContent, 600)}`);
-  options.onLog?.({ label: options.label ?? 'llm', ts: new Date().toISOString(), user: options.user, response: resultContent });
-  return {
-    content: resultContent,
-    usage: json.usage
-      ? { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0 }
-      : undefined,
-  };
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    content = json.choices?.[0]?.message?.content ?? '';
+    finishReason = json.choices?.[0]?.finish_reason;
+    if (json.usage) {
+      usage = { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0 };
+    }
+    console.error(`${tag} ← ${content.length} chars finish=${finishReason ?? '?'}: ${trunc(content, 600)}`);
+    emitLog();
+    return { content, usage, finishReason };
+  } catch (e) {
+    const errorClass = classifyError(e);
+    emitLog({ errorClass, error: (e as Error).message });
+    if (e instanceof LlmError) throw e;
+    const friendly = (e as Error).name === 'TimeoutError' ? `LLM 请求超时（${timeoutMs / 1000}s）` : `LLM 请求异常: ${(e as Error).message}`;
+    throw new LlmError(friendly, errorClass, undefined, { cause: e });
+  }
 }

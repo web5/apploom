@@ -4,6 +4,7 @@
  *   POST /pipeline              { requirement, confirmEachStep? } → 201 { id }
  *   GET  /pipeline/:id          当前状态快照（PipelineDoc）
  *   GET  /pipeline/:id/events   SSE 实时进度流
+ *   GET  /pipeline/:id/trace    阶段执行记录列表（?stage=）；/trace/:attemptId 取完整记录
  *   POST /pipeline/:id/confirm  { stage } 逐步确认，放行下一阶段
  *   POST /pipeline/:id/retry    { stage? } 重试失败阶段
  *
@@ -23,6 +24,7 @@ import {
   Header,
   Param,
   Post,
+  Query,
   Req,
   Res,
 } from '@nestjs/common';
@@ -65,6 +67,31 @@ export class PipelineController {
       return;
     }
     res.json(doc);
+  }
+
+  /** 执行记录列表（不含 prompt/响应体）；?stage= 过滤阶段 */
+  @Get(':id/trace')
+  async trace(@Param('id') id: string, @Query('stage') stage: string | undefined, @Res() res: Response) {
+    if (stage && !PIPELINE_STAGES.includes(stage as PipelineStage)) {
+      res.status(400).json({ message: `stage 无效，可选: ${PIPELINE_STAGES.join(' | ')}` });
+      return;
+    }
+    if (!(await this.pipeline.get(id))) {
+      res.status(404).json({ message: 'pipeline 不存在' });
+      return;
+    }
+    res.json({ items: await this.pipeline.listAttempts(id, stage as PipelineStage | undefined) });
+  }
+
+  /** 单次执行的完整记录（含每次 LLM 调用的 prompt / 响应 / 用量，可用于复盘重放） */
+  @Get(':id/trace/:attemptId')
+  async attempt(@Param('id') id: string, @Param('attemptId') attemptId: string, @Res() res: Response) {
+    const record = await this.pipeline.getAttempt(id, attemptId);
+    if (!record) {
+      res.status(404).json({ message: '执行记录不存在' });
+      return;
+    }
+    res.json(record);
   }
 
   /** SSE 实时进度流 */

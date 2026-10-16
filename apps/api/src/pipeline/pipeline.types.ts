@@ -28,14 +28,36 @@ export type StageStatus =
   | 'failed'           // 失败，可重试
   | 'waiting_confirm'; // 等待确认后继续下一步
 
-/** 单次 LLM 调用日志（供前端页面调试入口展示） */
-export interface LlmLogEntry {
-  label: string;
-  ts: string;
-  /** user prompt（含 repair 反馈，是调试关键） */
-  user: string;
-  /** 模型响应原文 */
-  response: string;
+import type { ErrorClass, LlmLogEntry, LlmUsage } from '@apploom/llm';
+
+/** 单次 LLM 调用日志（定义在网关，供前端调试入口与 trace 共用） */
+export type { ErrorClass, LlmLogEntry, LlmUsage };
+
+/** 触发一次阶段执行的原因 */
+export type AttemptTrigger = 'initial' | 'retry' | 'repair' | 'auto-repair';
+
+/**
+ * 一次阶段执行（Attempt）的完整记录 —— 存独立 Redis list，不撑大主文档。
+ * 保留完整 prompt / 响应，使任意一次执行可事后复盘与重放。
+ */
+export interface AttemptRecord {
+  id: string;
+  docId: string;
+  stage: PipelineStage;
+  /** 该阶段的第几次执行（含自动修复轮） */
+  n: number;
+  trigger: AttemptTrigger;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  outcome: 'done' | 'failed';
+  errorClass?: ErrorClass;
+  error?: string;
+  /** 本次执行带入的用户/自动反馈 */
+  feedback?: string;
+  usage: LlmUsage;
+  llmCalls: number;
+  llmLogs: LlmLogEntry[];
 }
 
 /** 单个阶段的执行结果 */
@@ -49,6 +71,8 @@ export interface StageState {
   summary?: unknown;
   /** 失败信息 */
   error?: string;
+  /** 失败的错误类别（决定恢复策略） */
+  errorClass?: ErrorClass;
   /** 已尝试次数（重试会 +1） */
   attempts: number;
   /** 用户填的修复/修改意见（带反馈重生成） */
