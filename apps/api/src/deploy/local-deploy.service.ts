@@ -15,7 +15,8 @@
  *
  * 设计取舍：
  *   - 不做 sandbox（chroot / docker / seccomp）：MVP 范围，依赖 tools 沙箱（路径白名单）
- *   - 不做 stop API（用户重启 API 即可清理所有 dev server 子进程）
+ *   - 不做 stop API / 退出清理：dev server 以 detached + unref 启动，API 重启后仍存活并继续占端口；
+ *     同端口再次部署时由 freePort 终止（自己的旧进程免审批）。不同端口的旧进程会一直留着，需手动清理
  *   - 不并发限制（先跑通，跑挂再调）
  *   - 端口检查（lsof/kill）是系统级运维细节，不属于 Agent 基础能力，保留本地实现
  */
