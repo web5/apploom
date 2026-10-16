@@ -8,7 +8,7 @@
  *  - 声明 requiresApproval：若上层注入 approver，执行前会先询问（dsh 逐次审批）；
  *    MVP 缺省无 approver = 放行
  */
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { resolveInWorkspace, truncateOutput } from '../sandbox';
 import { ToolDefinition, ToolResult, ToolContext } from '../types';
@@ -39,6 +39,20 @@ export const ShellSchema = {
   additionalProperties: false,
 } as const;
 
+/** 杀掉整个进程组（负 pid）；失败（进程已退出等）时退化为只杀直接子进程 */
+function killTree(child: ChildProcess): void {
+  try {
+    if (child.pid) process.kill(-child.pid, 'SIGKILL');
+    else child.kill('SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* 已退出 */
+    }
+  }
+}
+
 export const shellTool: ToolDefinition<ShellInput> = {
   name: 'shell',
   description: '在工作区内执行 shell 命令。返回退出码与合并的 stdout/stderr（超长自动截断）。含管道/重定向等组合命令时用 ["-c", "命令"]。',
@@ -58,10 +72,12 @@ export const shellTool: ToolDefinition<ShellInput> = {
     const maxOutputBytes = input.maxOutputBytes ?? 32 * 1024;
 
     return new Promise<ToolResult>((resolve) => {
+      // detached：子进程自成进程组，超时 / 中止时才能连孙进程（npm 脚本里起的后台进程）一起杀掉
       const child = spawn(input.command, input.args ?? [], {
         cwd,
         shell: false,
-        env: { ...process.env, CI: '1', ADBLOCK: '1' },
+        detached: true,
+        env: { ...(ctx.env ?? process.env), CI: '1', ADBLOCK: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -71,11 +87,11 @@ export const shellTool: ToolDefinition<ShellInput> = {
 
       const timer = setTimeout(() => {
         killedByTimeout = true;
-        child.kill('SIGKILL');
+        killTree(child);
       }, timeoutMs);
 
       const onAbort = () => {
-        if (!exited) child.kill('SIGKILL');
+        if (!exited) killTree(child);
       };
       ctx.signal?.addEventListener('abort', onAbort, { once: true });
 

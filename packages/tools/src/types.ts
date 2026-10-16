@@ -47,6 +47,11 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** 审批回调；设置后 requiresApproval 的工具执行前会先询问 */
   approver?: Approver;
+  /**
+   * 子进程环境变量。设置后 shell 工具只使用它（不再继承 process.env）；缺省沿用 process.env。
+   * 执行 LLM 生成的代码（install 脚本 / dev server）时必须显式传入最小环境，避免泄漏 API 进程里的密钥。
+   */
+  env?: Record<string, string | undefined>;
 }
 
 /** 工具结果：结构化为「人类可读 + LLM 可读」的输出，作为反馈循环的输入 */
