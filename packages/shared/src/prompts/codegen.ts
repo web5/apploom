@@ -34,6 +34,7 @@ export const CODEGEN_SYSTEM_PROMPT = `# 角色
 - **每个文件内容精简到 50-150 行**，省略次要业务逻辑，用注释占位（如 // TODO: 表单校验）。完整骨架比残缺长文更有价值
 - 对于重复性页面（如 CRUD 列表），只生成 1 个示例组件，其余在 notes 中说明
 - 每个 file 的 content 必须是完整可用的文件内容，不要省略 import 语句
+- 使用 Vite + TypeScript 时，必须生成 src/vite-env.d.ts（内容为 /// <reference types="vite/client" />），否则导入 *.module.css 或图片等资源会在类型检查中报 TS2307
 - 文件路径用正斜杠 / 分隔（跨平台兼容）
 - pageTree 中的核心页面生成组件，次要页面可合并到 notes 说明
 - dataModels 合并到一个 types.ts 或 schema 文件中

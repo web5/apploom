@@ -1,0 +1,221 @@
+{
+  "label": "vite-env-constraint",
+  "model": "deepseek/deepseek-v4-flash-0731",
+  "startedAt": "2026-10-16T11:14:00.555Z",
+  "cases": [
+    {
+      "id": "counter",
+      "title": "计数器（最简前端）",
+      "passed": true,
+      "reachedCodegen": true,
+      "stageStatus": {
+        "requirement": "done",
+        "prototype": "done",
+        "design": "done",
+        "codegen": "done",
+        "deploy": "pending"
+      },
+      "gate": {
+        "passed": true,
+        "repairRounds": 1,
+        "checks": [
+          {
+            "name": "structure",
+            "ok": true
+          },
+          {
+            "name": "install",
+            "ok": true
+          },
+          {
+            "name": "typecheck",
+            "ok": true
+          },
+          {
+            "name": "build",
+            "ok": true
+          }
+        ]
+      },
+      "autoRepairs": 0,
+      "firstTry": false,
+      "llmCalls": 5,
+      "tokens": {
+        "prompt": 13158,
+        "completion": 9797,
+        "total": 22955,
+        "estimated": false
+      },
+      "durationMs": 54197,
+      "stageDurationsMs": {
+        "requirement": 2551,
+        "prototype": 8924,
+        "design": 2555,
+        "codegen": 35661
+      },
+      "files": 13
+    },
+    {
+      "id": "todo",
+      "title": "待办清单（本地持久化）",
+      "passed": true,
+      "reachedCodegen": true,
+      "stageStatus": {
+        "requirement": "done",
+        "prototype": "done",
+        "design": "done",
+        "codegen": "done",
+        "deploy": "pending"
+      },
+      "gate": {
+        "passed": true,
+        "repairRounds": 0,
+        "checks": [
+          {
+            "name": "structure",
+            "ok": true
+          },
+          {
+            "name": "install",
+            "ok": true
+          },
+          {
+            "name": "typecheck",
+            "ok": true
+          },
+          {
+            "name": "build",
+            "ok": true
+          }
+        ]
+      },
+      "autoRepairs": 0,
+      "firstTry": true,
+      "llmCalls": 4,
+      "tokens": {
+        "prompt": 7099,
+        "completion": 9583,
+        "total": 16682,
+        "estimated": false
+      },
+      "durationMs": 42089,
+      "stageDurationsMs": {
+        "requirement": 3349,
+        "prototype": 12695,
+        "design": 3900,
+        "codegen": 19834
+      },
+      "files": 18
+    },
+    {
+      "id": "bookmarks",
+      "title": "书签管理（搜索 + 标签）",
+      "passed": true,
+      "reachedCodegen": true,
+      "stageStatus": {
+        "requirement": "done",
+        "prototype": "done",
+        "design": "done",
+        "codegen": "done",
+        "deploy": "pending"
+      },
+      "gate": {
+        "passed": true,
+        "repairRounds": 0,
+        "checks": [
+          {
+            "name": "structure",
+            "ok": true
+          },
+          {
+            "name": "install",
+            "ok": true
+          },
+          {
+            "name": "typecheck",
+            "ok": true
+          },
+          {
+            "name": "build",
+            "ok": true
+          }
+        ]
+      },
+      "autoRepairs": 0,
+      "firstTry": true,
+      "llmCalls": 4,
+      "tokens": {
+        "prompt": 6727,
+        "completion": 9278,
+        "total": 16005,
+        "estimated": false
+      },
+      "durationMs": 40115,
+      "stageDurationsMs": {
+        "requirement": 3571,
+        "prototype": 11576,
+        "design": 3280,
+        "codegen": 19805
+      },
+      "files": 15
+    },
+    {
+      "id": "landing",
+      "title": "静态落地页（无构建）",
+      "passed": true,
+      "reachedCodegen": true,
+      "stageStatus": {
+        "requirement": "done",
+        "prototype": "done",
+        "design": "done",
+        "codegen": "done",
+        "deploy": "pending"
+      },
+      "gate": {
+        "passed": true,
+        "repairRounds": 0,
+        "checks": [
+          {
+            "name": "structure",
+            "ok": true
+          },
+          {
+            "name": "install",
+            "ok": true
+          },
+          {
+            "name": "build",
+            "ok": true
+          }
+        ]
+      },
+      "autoRepairs": 0,
+      "firstTry": true,
+      "llmCalls": 4,
+      "tokens": {
+        "prompt": 6659,
+        "completion": 6106,
+        "total": 12765,
+        "estimated": false
+      },
+      "durationMs": 30066,
+      "stageDurationsMs": {
+        "requirement": 3074,
+        "prototype": 6707,
+        "design": 2600,
+        "codegen": 12537
+      },
+      "files": 6
+    }
+  ],
+  "totals": {
+    "cases": 4,
+    "passed": 4,
+    "passRate": 1,
+    "firstTryRate": 0.75,
+    "avgTokens": 17102,
+    "avgDurationMs": 41617,
+    "avgAutoRepairs": 0,
+    "avgGateRepairRounds": 0.25
+  }
+}
