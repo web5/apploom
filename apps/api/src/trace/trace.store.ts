@@ -69,6 +69,10 @@ export class TraceStore implements OnModuleDestroy {
     return (await this.list(docId)).find((r) => r.id === attemptId) ?? null;
   }
 
+  async remove(docId: string): Promise<void> {
+    await this.redis.del(traceKey(docId));
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.redis.quit();
   }

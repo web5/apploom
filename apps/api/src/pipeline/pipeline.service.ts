@@ -41,7 +41,8 @@ import {
   createPipelineDoc,
 } from './pipeline.types';
 
-export const PIPELINE_QUEUE = 'apploom-pipeline';
+/** 队列名可由 PIPELINE_QUEUE 覆盖：评测在独立队列里跑，避免与同时运行的开发 API 抢任务 */
+export const PIPELINE_QUEUE = process.env.PIPELINE_QUEUE || 'apploom-pipeline';
 
 /** BullMQ job data：只携带 docId + 当前阶段，状态全在 Redis doc 里 */
 interface PipelineJobData {
