@@ -24,6 +24,7 @@ import { LocalDeployService } from '../deploy/local-deploy.service';
 import { CodegenGateService, formatFailures, gateMaxRepairs, gateMode } from '../gate/codegen-gate';
 import { TraceStore, summarizeUsage } from '../trace/trace.store';
 import { assertWithinBudget, pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
+import { saveArtifact } from '../artifacts/artifact';
 import { classifyError } from '@apploom/llm';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
@@ -546,7 +547,10 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       }
       case 'prototype': {
         const r = await this.llm.generatePrototype(doc.stages.requirement.result, onToken, repair, onLog);
-        return { raw: r.raw, result: r.prototype, summary: r.summary, error: r.error, llmLogs: logs };
+        // 完整 HTML 另存为文件（doc 里仍保留一份供前端预览）；写文件失败不影响阶段结果
+        const html = (r.prototype as { html?: unknown } | undefined)?.html;
+        const htmlFile = typeof html === 'string' ? await saveArtifact(docId, 'prototype.html', html).catch(() => undefined) : undefined;
+        return { raw: r.raw, result: r.prototype, summary: htmlFile && r.summary ? { ...r.summary, htmlFile } : r.summary, error: r.error, llmLogs: logs };
       }
       case 'design': {
         const r = await this.llm.generateDesign(

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { loadProviderFromEnv, chat, type LlmLogEntry } from '@apploom/llm';
+import { prototypeForDesign, renderPrototypeForCodegen } from './prototype-digest';
 import {
   PRDSchema,
   PRD_JSON_SCHEMA,
@@ -280,7 +281,7 @@ export class LlmService {
       label: 'generateDesign',
       onLog,
       system: ARCHITECT_SYSTEM_PROMPT,
-      user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}\n\n上游产品原型（页面清单与交互，pageTree 请与之对齐）：\n${JSON.stringify(prototype, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
+      user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}\n\n上游产品原型（页面清单与交互，pageTree 请与之对齐；已省略 HTML 实现）：\n${JSON.stringify(prototypeForDesign(prototype), null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.5,
       jsonSchema: { name: 'DesignDocument', schema: DESIGN_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
@@ -328,7 +329,7 @@ export class LlmService {
       label: 'generateCodegen',
       onLog,
       system: CODEGEN_SYSTEM_PROMPT,
-      user: `上游 DesignDocument：\n${JSON.stringify(design, null, 2)}\n\n上游产品原型（页面布局与交互，UI 代码请与之对齐）：\n${JSON.stringify(prototype, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
+      user: `上游 DesignDocument：\n${JSON.stringify(design, null, 2)}\n\n上游产品原型精简版（页面布局与交互，UI 代码请与之对齐）：\n${renderPrototypeForCodegen(prototype)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,
       maxTokens: 8192,
       jsonSchema: { name: 'CodegenDocument', schema: CODEGEN_JSON_SCHEMA as unknown as Record<string, unknown> },
