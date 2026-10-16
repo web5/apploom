@@ -10,7 +10,7 @@
 
 ## 仓库位置与进度现状（2026-10-15 核查）
 
-- **代码仓库**：`~/WorkBuddy/AppLoom/2026-08-12-Phase0骨架搭建/`（git master，托管 web5/apploom.git）
+- **代码仓库**：`~/workspace/apploom/`（git master，托管 web5/apploom.git；2026-10-16 从 `~/WorkBuddy/AppLoom/2026-08-12-Phase0骨架搭建/` 迁入，设计文档与学习资料仍在 `~/WorkBuddy/AppLoom/` 下）
 - **项目子目录**：2026-08-12-4Agent流水线补全 / 2026-08-12-Phase0骨架搭建 / 2026-08-12-项目指令咨询 / 2026-09-01-Graph-Ontology引擎融合
 - **最新提交**：2026-08-20 `feat(tools): 抽离 Agent 基础能力层 packages/tools`
 - **⚠️ 停滞状态**：最后提交 8/20，工作区有 **9 个文件已改未提交**（+333/-41 行），集中在 prototype Agent（`packages/shared/src/prompts/prototype.ts` + `schemas/prototype.ts` 两个新文件未跟踪）。**即第 2 环「产品原型 Agent」开发到一半停了。**
