@@ -104,6 +104,12 @@ export function checkStructure(codegen: CodegenInput): GateFailure[] {
     if (m && m[1] !== 'start' && !pkg.scripts?.[m[1]]) {
       fail(`runCommand 为 "${codegen.runCommand}"，但 package.json 的 scripts 中没有 "${m[1]}"`);
     }
+
+    // tsc 找不到 tsconfig.json 时只会打印一屏帮助信息就失败，比一次 install + build 便宜得多，在这里直接拦下
+    const usesTsc = Object.values(pkg.scripts ?? {}).some((s) => /(^|[\s&|;(])tsc(\s|$)/.test(s));
+    if (usesTsc && !codegen.files.some((f) => f.path.trim() === 'tsconfig.json')) {
+      fail('package.json 的 scripts 使用了 tsc，但没有生成 tsconfig.json（tsc 找不到配置会只打印帮助信息并失败）');
+    }
   }
   return failures;
 }
@@ -116,10 +122,20 @@ export function formatFailures(failures: GateFailure[]): string {
   return `你上一次生成的代码未通过自动校验，请逐条修复后重新输出完整的 CodegenDocument（保持其它部分不变）：\n\n${body}`;
 }
 
-function clip(text: string, mode: 'head' | 'tail'): string {
+/**
+ * 裁剪命令输出作为回喂给模型的错误详情：
+ *  head  保留开头（tsc 的错误列表按顺序给出）
+ *  tail  保留结尾
+ *  both  开头 + 结尾（构建类命令：开头常是真正的报错，结尾常是汇总；只取一端会被工具打印的帮助/堆栈刷屏盖掉）
+ */
+export function clipOutput(text: string, mode: 'head' | 'tail' | 'both'): string {
   const t = text.trim();
   if (t.length <= DETAIL_LIMIT) return t;
-  return mode === 'head' ? `${t.slice(0, DETAIL_LIMIT)}\n…（已截断）` : `…（已截断）\n${t.slice(-DETAIL_LIMIT)}`;
+  if (mode === 'head') return `${t.slice(0, DETAIL_LIMIT)}\n…（已截断）`;
+  if (mode === 'tail') return `…（已截断）\n${t.slice(-DETAIL_LIMIT)}`;
+  const headLen = Math.floor(DETAIL_LIMIT * 0.4);
+  const tailLen = DETAIL_LIMIT - headLen;
+  return `${t.slice(0, headLen)}\n…（中间省略 ${t.length - DETAIL_LIMIT} 字符）…\n${t.slice(-tailLen)}`;
 }
 
 @Injectable()
@@ -168,14 +184,14 @@ export class CodegenGateService {
     const pm = detectPackageManager(root, codegen.runCommand);
     const installed = await record('install', async () => {
       const r = await this.exec(pm.installCmd[0], pm.installCmd.slice(1), root, INSTALL_TIMEOUT_MS, approver);
-      return r.ok ? null : { check: 'install', message: `${pm.name} install 失败（${r.reason}）`, detail: clip(r.output, 'tail') };
+      return r.ok ? null : { check: 'install', message: `${pm.name} install 失败（${r.reason}）`, detail: clipOutput(r.output, 'both') };
     });
     if (!installed) return report;
 
     if (existsSync(path.join(root, 'tsconfig.json')) && existsSync(path.join(root, 'node_modules/.bin/tsc'))) {
       const typecheckOk = await record('typecheck', async () => {
         const r = await this.exec('node_modules/.bin/tsc', ['--noEmit'], root, TSC_TIMEOUT_MS, approver);
-        return r.ok ? null : { check: 'typecheck', message: `tsc --noEmit 未通过（${r.reason}）`, detail: clip(r.output, 'head') };
+        return r.ok ? null : { check: 'typecheck', message: `tsc --noEmit 未通过（${r.reason}）`, detail: clipOutput(r.output, 'head') };
       });
       if (!typecheckOk) return report;
     }
@@ -184,7 +200,7 @@ export class CodegenGateService {
     if (pkg.scripts?.build) {
       await record('build', async () => {
         const r = await this.exec(pm.name, ['run', 'build'], root, BUILD_TIMEOUT_MS, approver);
-        return r.ok ? null : { check: 'build', message: `${pm.name} run build 未通过（${r.reason}）`, detail: clip(r.output, 'tail') };
+        return r.ok ? null : { check: 'build', message: `${pm.name} run build 未通过（${r.reason}）`, detail: clipOutput(r.output, 'both') };
       });
     }
 
