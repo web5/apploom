@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-type Stage = 'requirement' | 'design' | 'codegen' | 'deploy';
+type Stage = 'requirement' | 'prototype' | 'design' | 'codegen' | 'deploy';
 type Status = 'pending' | 'running' | 'done' | 'error' | 'waiting_confirm';
 
 // ===== 后端 PipelineDoc 契约（对齐 apps/api/src/pipeline/pipeline.types.ts）=====
@@ -74,18 +74,25 @@ interface Deploy {
   buildLog: string;
   status: 'success' | 'failed';
 }
+interface Prototype {
+  appName: string; designStyle: string;
+  html: string;
+  pages: { id: string; title: string }[];
+  flows: { name: string; description: string }[];
+}
 
 const STAGE_LABEL: Record<Stage, string> = {
   requirement: '需求拆解',
+  prototype: '产品原型',
   design: '方案设计',
   codegen: '代码生成',
   deploy: '部署发布',
 };
 
-const STAGES: Stage[] = ['requirement', 'design', 'codegen', 'deploy'];
+const STAGES: Stage[] = ['requirement', 'prototype', 'design', 'codegen', 'deploy'];
 
 function emptyTokens(): Record<Stage, string> {
-  return { requirement: '', design: '', codegen: '', deploy: '' };
+  return { requirement: '', prototype: '', design: '', codegen: '', deploy: '' };
 }
 
 /** 后端 StageStatus → 前端 Status */
@@ -115,7 +122,7 @@ function StudioPageInner() {
   const [confirmMode, setConfirmMode] = useState(true);
   const [doc, setDoc] = useState<PipelineDoc | null>(null);
   const [tokens, setTokens] = useState<Record<Stage, string>>(emptyTokens());
-  const [busy, setBusy] = useState<Record<Stage, boolean>>({ requirement: false, design: false, codegen: false, deploy: false });
+  const [busy, setBusy] = useState<Record<Stage, boolean>>({ requirement: false, prototype: false, design: false, codegen: false, deploy: false });
   const [repairOpen, setRepairOpen] = useState<Stage | null>(null);
   const [repairText, setRepairText] = useState('');
   const [connected, setConnected] = useState(false);
@@ -349,12 +356,13 @@ function StudioPageInner() {
   const streaming = activeStage ? tokens[activeStage] : '';
 
   const prd = doc?.stages.requirement.result as PRD | undefined;
+  const prototype = doc?.stages.prototype.result as Prototype | undefined;
   const design = doc?.stages.design.result as Design | undefined;
   const codegen = doc?.stages.codegen.result as Codegen | undefined;
   const deploy = doc?.stages.deploy.result as Deploy | undefined;
 
   const canStart = !doc || isCompleted || isFailed;
-  const previewLabel = deploy ? 'DeployDocument' : codegen ? 'CodegenDocument' : design ? 'DesignDocument' : prd ? 'PRD' : '待生成';
+  const previewLabel = deploy ? 'DeployDocument' : codegen ? 'CodegenDocument' : design ? 'DesignDocument' : prototype ? 'PrototypeDocument' : prd ? 'PRD' : '待生成';
   const showStream = activeRunning;
 
   /** 对话式修改输入框（done / waiting_confirm / error 状态通用） */
@@ -381,7 +389,7 @@ function StudioPageInner() {
       <header className="topbar">
         <span className="logo">🚀 AppLoom · Studio</span>
         <span className="sub">
-          生产端 · 异步 4-Agent 流水线（BullMQ + SSE）
+          生产端 · 异步 5-Agent 流水线（BullMQ + SSE）
           {connected && <span style={{ color: '#10b981', marginLeft: 6 }}>● 实时连接</span>}
         </span>
         <button className="btn btn-ghost" onClick={loadHistory}>📚 历史项目</button>
@@ -453,7 +461,7 @@ function StudioPageInner() {
               </button>
             </>
           )}
-          {isCompleted && <span>✓ 全部完成 —— 4 个 Agent 已产出完整交付物</span>}
+          {isCompleted && <span>✓ 全部完成 —— 5 个 Agent 已产出完整交付物</span>}
         </div>
       )}
 
@@ -563,7 +571,7 @@ function StudioPageInner() {
                         {repairOpen === stage && repairEntry(stage)}
                       </div>
                     )}
-                    {stageMeta(stage, prd, design, codegen, deploy)}
+                    {stageMeta(stage, prd, prototype, design, codegen, deploy)}
                   </div>
                   {i < STAGES.length - 1 && <div className="connector" />}
                 </div>
@@ -605,10 +613,12 @@ function StudioPageInner() {
               <CodegenView codegen={codegen} />
             ) : design ? (
               <DesignView design={design} />
+            ) : prototype ? (
+              <PrototypeView prototype={prototype} />
             ) : prd ? (
               <PrdView prd={prd} />
             ) : (
-              <p className="ph">输入一句话需求，依次经过 4 个 Agent：需求拆解 → 方案设计 → 代码生成 → 部署发布。</p>
+              <p className="ph">输入一句话需求，依次经过 5 个 Agent：需求拆解 → 产品原型 → 方案设计 → 代码生成 → 部署发布。</p>
             )}
           </div>
         </aside>
@@ -752,6 +762,12 @@ function StudioPageInner() {
         .deploy-failed { color:#ef4444; font-weight:600; }
         .build-log { font-family:'SF Mono',monospace; font-size:11px; background:#1a1a2e; color:#a7f3d0; border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-all; }
 
+        /* === 产品原型 HTML 预览 === */
+        .proto-frame { width:100%; height:480px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }
+        .flow-item { padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px; }
+        .flow-item b { font-size:12px; color:#1a1a2e; }
+        .flow-desc { font-size:11px; color:#6b7280; margin-left:8px; }
+
         @keyframes studio-spin { to { transform:rotate(360deg); } }
         @keyframes studio-blink { 0%,50% { opacity:1; } 51%,100% { opacity:0; } }
       `}</style>
@@ -782,7 +798,7 @@ function statusIcon(s: Status, num: number) {
 }
 
 /** 各阶段卡片摘要行（数据来自后端 doc.stages[stage].result） */
-function stageMeta(stage: Stage, prd?: PRD, design?: Design, codegen?: Codegen, deploy?: Deploy) {
+function stageMeta(stage: Stage, prd?: PRD, prototype?: Prototype, design?: Design, codegen?: Codegen, deploy?: Deploy) {
   if (stage === 'requirement' && prd) {
     return (
       <div className="stage-body">
@@ -791,6 +807,17 @@ function stageMeta(stage: Stage, prd?: PRD, design?: Design, codegen?: Codegen, 
           <span>P0 {prd.features.filter((f) => f.priority === 'P0').length}</span>
           <span>假设 {prd.assumptions.length}</span>
           <span>实体 {prd.entities.length}</span>
+        </div>
+      </div>
+    );
+  }
+  if (stage === 'prototype' && prototype) {
+    return (
+      <div className="stage-body">
+        <div className="meta-row">
+          <span>页面 {prototype.pages.length}</span>
+          <span>流程 {prototype.flows.length}</span>
+          <span>HTML {Math.round(prototype.html.length / 1024)}KB</span>
         </div>
       </div>
     );
@@ -838,8 +865,9 @@ function stageMeta(stage: Stage, prd?: PRD, design?: Design, codegen?: Codegen, 
 
 const STAGE_STEPS: Record<Stage, string[]> = {
   requirement: ['解析一句话需求', '识别目标用户与场景', '拆解功能与优先级', '抽取数据实体', '生成假设与验收点'],
-  design: ['阅读 PRD', '决策技术栈', '设计页面路由', '设计数据模型', '设计 API 接口'],
-  codegen: ['阅读 Design', '规划文件结构', '生成页面组件', '生成 API 路由', '生成配置与依赖'],
+  prototype: ['阅读 PRD 页面清单', '设计页面布局区块', '拆解组件与文案', '梳理核心用户流程', '定义交互跳转关系'],
+  design: ['阅读 PRD 与原型', '决策技术栈', '设计页面路由', '设计数据模型', '设计 API 接口'],
+  codegen: ['阅读 Design 与原型', '规划文件结构', '生成页面组件', '生成 API 路由', '生成配置与依赖'],
   deploy: ['阅读 Codegen', '准备构建环境', '安装依赖', '执行构建', '发布到云端'],
 };
 
@@ -1019,6 +1047,41 @@ function DeployView({ deploy }: { deploy: Deploy }) {
       )}
       <section><h4>构建日志</h4>
         <div className="build-log">{deploy.buildLog}</div>
+      </section>
+    </div>
+  );
+}
+
+/** 产品原型线框稿渲染：可切换页面查看布局，区块/组件用占位块呈现 */
+function PrototypeView({ prototype }: { prototype: Prototype }) {
+  return (
+    <div>
+      <section>
+        <h4>应用</h4>
+        <p><b>{prototype.appName}</b> · {prototype.designStyle}</p>
+      </section>
+      <section>
+        <h4>页面 ({prototype.pages.length})</h4>
+        <div className="tags">
+          {prototype.pages.map((p) => <span key={p.id} className="tag">{p.title}</span>)}
+        </div>
+      </section>
+      <section>
+        <h4>交互预览</h4>
+        <iframe
+          className="proto-frame"
+          srcDoc={prototype.html}
+          title="产品原型预览"
+          sandbox="allow-scripts allow-same-origin allow-modals"
+        />
+      </section>
+      <section>
+        <h4>核心流程 ({prototype.flows.length})</h4>
+        {prototype.flows.map((f) => (
+          <div key={f.name} className="flow-item">
+            <b>{f.name}</b><span className="flow-desc">{f.description}</span>
+          </div>
+        ))}
       </section>
     </div>
   );

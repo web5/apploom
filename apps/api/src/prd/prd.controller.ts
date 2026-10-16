@@ -44,20 +44,20 @@ export class PrdController {
     }
   }
 
-  /** 架构设计 Agent：上游 PRD → 技术方案 DesignDocument */
-  @Post('design')
+  /** 产品原型 Agent：上游 PRD → 产品交互原型线框稿 */
+  @Post('prototype')
   @Header('Content-Type', 'text/event-stream')
   @Header('Cache-Control', 'no-cache, no-transform')
   @Header('Connection', 'keep-alive')
   @Header('X-Accel-Buffering', 'no')
-  async design(@Body() body: { prd?: unknown }, @Res() res: Response) {
+  async prototype(@Body() body: { prd?: unknown }, @Res() res: Response) {
     if (!body?.prd) {
       res.write(`event: error\ndata: ${JSON.stringify({ message: 'prd 不能为空' })}\n\n`);
       return res.end();
     }
     res.flushHeaders?.();
     try {
-      const result = await this.llm.generateDesign(body.prd, (token) => {
+      const result = await this.llm.generatePrototype(body.prd, (token) => {
         res.write(`event: token\ndata: ${JSON.stringify(token)}\n\n`);
       });
       res.write(`event: done\ndata: ${JSON.stringify(result)}\n\n`);
@@ -70,20 +70,46 @@ export class PrdController {
     }
   }
 
-  /** 代码生成 Agent：上游 DesignDocument → 多文件代码 */
+  /** 架构设计 Agent：上游 PRD + 原型 → 技术方案 DesignDocument */
+  @Post('design')
+  @Header('Content-Type', 'text/event-stream')
+  @Header('Cache-Control', 'no-cache, no-transform')
+  @Header('Connection', 'keep-alive')
+  @Header('X-Accel-Buffering', 'no')
+  async design(@Body() body: { prd?: unknown; prototype?: unknown }, @Res() res: Response) {
+    if (!body?.prd) {
+      res.write(`event: error\ndata: ${JSON.stringify({ message: 'prd 不能为空' })}\n\n`);
+      return res.end();
+    }
+    res.flushHeaders?.();
+    try {
+      const result = await this.llm.generateDesign(body.prd, body.prototype, (token) => {
+        res.write(`event: token\ndata: ${JSON.stringify(token)}\n\n`);
+      });
+      res.write(`event: done\ndata: ${JSON.stringify(result)}\n\n`);
+    } catch (e) {
+      res.write(
+        `event: error\ndata: ${JSON.stringify({ message: (e as Error).message })}\n\n`,
+      );
+    } finally {
+      res.end();
+    }
+  }
+
+  /** 代码生成 Agent：上游 DesignDocument + 原型 → 多文件代码 */
   @Post('codegen')
   @Header('Content-Type', 'text/event-stream')
   @Header('Cache-Control', 'no-cache, no-transform')
   @Header('Connection', 'keep-alive')
   @Header('X-Accel-Buffering', 'no')
-  async codegen(@Body() body: { design?: unknown }, @Res() res: Response) {
+  async codegen(@Body() body: { design?: unknown; prototype?: unknown }, @Res() res: Response) {
     if (!body?.design) {
       res.write(`event: error\ndata: ${JSON.stringify({ message: 'design 不能为空' })}\n\n`);
       return res.end();
     }
     res.flushHeaders?.();
     try {
-      const result = await this.llm.generateCodegen(body.design, (token) => {
+      const result = await this.llm.generateCodegen(body.design, body.prototype, (token) => {
         res.write(`event: token\ndata: ${JSON.stringify(token)}\n\n`);
       });
       res.write(`event: done\ndata: ${JSON.stringify(result)}\n\n`);

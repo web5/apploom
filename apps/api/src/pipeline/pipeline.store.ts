@@ -7,7 +7,7 @@
  */
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
-import { PIPELINE_STAGES, PipelineDoc, PipelineDocSummary } from './pipeline.types';
+import { PIPELINE_STAGES, PipelineDoc, PipelineDocSummary, emptyStage } from './pipeline.types';
 
 const DOC_KEY_PREFIX = 'pipeline:doc:';
 
@@ -35,12 +35,18 @@ export class PipelineStore implements OnModuleDestroy {
     await this.redis.set(docKey(doc.id), JSON.stringify(doc));
   }
 
-  /** 读取文档；不存在返回 null */
+  /** 读取文档；不存在返回 null。对旧数据（缺新增阶段）做迁移容错 */
   async get(id: string): Promise<PipelineDoc | null> {
     const raw = await this.redis.get(docKey(id));
     if (!raw) return null;
     try {
-      return JSON.parse(raw) as PipelineDoc;
+      const doc = JSON.parse(raw) as PipelineDoc;
+      // 迁移：补齐新增阶段（如 prototype）缺失的 stages / handoffs 字段，兼容旧 4 阶段文档
+      for (const s of PIPELINE_STAGES) {
+        if (!doc.stages[s]) doc.stages[s] = emptyStage();
+        if (doc.handoffs[s] === undefined) doc.handoffs[s] = false;
+      }
+      return doc;
     } catch {
       this.logger.error(`pipeline ${id} 文档 JSON 损坏`);
       return null;

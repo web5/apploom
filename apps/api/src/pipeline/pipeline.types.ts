@@ -1,7 +1,7 @@
 /**
  * Pipeline 异步流水线 —— 类型定义
  *
- * W7 Agent 工程化：把 4 个 Agent 从「前端点一下下一步」改为后台异步任务，
+ * W7 Agent 工程化：把多个 Agent 从「前端点一下下一步」改为后台异步任务，
  * 支持实时进度（SSE）、逐步确认、失败重试。
  *
  * 状态机：
@@ -9,8 +9,8 @@
  *   Stage:    pending → running → done | failed | waiting_confirm
  */
 
-/** 4 个流水线阶段（Agent 顺序） */
-export type PipelineStage = 'requirement' | 'design' | 'codegen' | 'deploy';
+/** 5 个流水线阶段（Agent 顺序） */
+export type PipelineStage = 'requirement' | 'prototype' | 'design' | 'codegen' | 'deploy';
 
 /** 流水线整体状态 */
 export type PipelineStatus =
@@ -18,7 +18,7 @@ export type PipelineStatus =
   | 'running'      // 某个阶段正在执行
   | 'waiting_confirm' // 阶段已完成，等待用户确认继续（逐步确认模式）
   | 'failed'       // 某个阶段失败，可重试
-  | 'completed';   // 全部 4 阶段完成
+  | 'completed';   // 全部阶段完成
 
 /** 单个阶段状态 */
 export type StageStatus =
@@ -41,7 +41,7 @@ export interface LlmLogEntry {
 /** 单个阶段的执行结果 */
 export interface StageState {
   status: StageStatus;
-  /** 结构化产出（PRD / Design / Codegen / Deploy） */
+  /** 结构化产出（PRD / Prototype / Design / Codegen / Deploy） */
   result?: unknown;
   /** LLM 原始输出（调试用） */
   raw?: string;
@@ -96,6 +96,7 @@ export function createPipelineDoc(requirement: string, confirmEachStep: boolean)
     currentStage: null,
     stages: {
       requirement: emptyStage(),
+      prototype: emptyStage(),
       design: emptyStage(),
       codegen: emptyStage(),
       deploy: emptyStage(),
@@ -103,6 +104,7 @@ export function createPipelineDoc(requirement: string, confirmEachStep: boolean)
     pendingConfirms: [],
     handoffs: {
       requirement: false,
+      prototype: false,
       design: false,
       codegen: false,
       deploy: false,
@@ -133,11 +135,12 @@ export interface PipelineDocSummary {
   stages: Record<PipelineStage, StageStatus>;
 }
 
-export const PIPELINE_STAGES: PipelineStage[] = ['requirement', 'design', 'codegen', 'deploy'];
+export const PIPELINE_STAGES: PipelineStage[] = ['requirement', 'prototype', 'design', 'codegen', 'deploy'];
 
 /** 阶段中文名（前端展示用） */
 export const STAGE_LABEL: Record<PipelineStage, string> = {
   requirement: '需求拆解',
+  prototype: '产品原型',
   design: '方案设计',
   codegen: '代码生成',
   deploy: '部署发布',

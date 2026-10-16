@@ -380,12 +380,28 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         const r = await this.llm.generatePrd(doc.requirement, onToken, repair, onLog);
         return { raw: r.raw, result: r.prd, summary: r.summary, error: r.error, llmLogs: logs };
       }
+      case 'prototype': {
+        const r = await this.llm.generatePrototype(doc.stages.requirement.result, onToken, repair, onLog);
+        return { raw: r.raw, result: r.prototype, summary: r.summary, error: r.error, llmLogs: logs };
+      }
       case 'design': {
-        const r = await this.llm.generateDesign(doc.stages.requirement.result, onToken, repair, onLog);
+        const r = await this.llm.generateDesign(
+          doc.stages.requirement.result,
+          doc.stages.prototype.result,
+          onToken,
+          repair,
+          onLog,
+        );
         return { raw: r.raw, result: r.design, summary: r.summary, error: r.error, llmLogs: logs };
       }
       case 'codegen': {
-        const r = await this.llm.generateCodegen(doc.stages.design.result, onToken, repair, onLog);
+        const r = await this.llm.generateCodegen(
+          doc.stages.design.result,
+          doc.stages.prototype.result,
+          onToken,
+          repair,
+          onLog,
+        );
         return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error, llmLogs: logs };
       }
       case 'deploy': {
