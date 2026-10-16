@@ -9,8 +9,10 @@
  *   Stage:    pending → running → done | failed | waiting_confirm
  */
 
-/** 5 个流水线阶段（Agent 顺序） */
-export type PipelineStage = 'requirement' | 'prototype' | 'design' | 'codegen' | 'deploy';
+import { STAGE_IDS, type StageId } from '@apploom/shared';
+
+/** 流水线阶段（Agent 顺序）——由 @apploom/shared 的 STAGE_GRAPH 推导，不要在这里手写 */
+export type PipelineStage = StageId;
 
 /** 流水线整体状态 */
 export type PipelineStatus =
@@ -119,20 +121,8 @@ export function createPipelineDoc(requirement: string, confirmEachStep: boolean)
     status: 'created',
     confirmEachStep,
     currentStage: null,
-    stages: {
-      requirement: emptyStage(),
-      prototype: emptyStage(),
-      design: emptyStage(),
-      codegen: emptyStage(),
-      deploy: emptyStage(),
-    },
-    handoffs: {
-      requirement: false,
-      prototype: false,
-      design: false,
-      codegen: false,
-      deploy: false,
-    },
+    stages: Object.fromEntries(PIPELINE_STAGES.map((st) => [st, emptyStage()])) as PipelineDoc['stages'],
+    handoffs: Object.fromEntries(PIPELINE_STAGES.map((st) => [st, false])) as PipelineDoc['handoffs'],
     createdAt: now,
     updatedAt: now,
   };
@@ -175,7 +165,7 @@ export interface PipelineDocSummary {
   stages: Record<PipelineStage, StageStatus>;
 }
 
-export const PIPELINE_STAGES: PipelineStage[] = ['requirement', 'prototype', 'design', 'codegen', 'deploy'];
+export const PIPELINE_STAGES: PipelineStage[] = [...STAGE_IDS];
 
 /** 阶段中文名（前端展示用） */
 export const STAGE_LABEL: Record<PipelineStage, string> = {

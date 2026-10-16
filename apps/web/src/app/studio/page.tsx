@@ -6,7 +6,11 @@ import { errorClassMeta } from '@/components/studio/errorClass';
 import { StageAttempts, TraceSummary, useTrace } from '@/components/studio/TracePanel';
 import { buildPreviewHtml, PREVIEW_SANDBOX } from '@/components/studio/previewHtml';
 
-type Stage = 'requirement' | 'prototype' | 'design' | 'codegen' | 'deploy';
+import { STAGE_IDS, STAGE_LABEL, type StageId } from '@apploom/shared/graph';
+import type { CodegenDocument, DeployDocument, DesignDocument, PRD, PrototypeDocument } from '@apploom/shared';
+
+/** 阶段与展示名由 @apploom/shared 的 STAGE_GRAPH 推导；五份 Agent 产出的类型由 Zod 导出，不要在这里手抄 */
+type Stage = StageId;
 type Status = 'pending' | 'running' | 'done' | 'error' | 'waiting_confirm';
 
 // ===== 后端 PipelineDoc 契约（对齐 apps/api/src/pipeline/pipeline.types.ts）=====
@@ -38,7 +42,6 @@ interface PipelineDoc {
   confirmEachStep: boolean;
   currentStage: Stage | null;
   stages: Record<Stage, StageState>;
-  pendingConfirms: Stage[];
   handoffs: Record<Stage, boolean>;
   createdAt: string;
   updatedAt: string;
@@ -54,48 +57,11 @@ interface PipelineDocSummary {
   stages: Record<Stage, StageStatus>;
 }
 
-interface Feature { id: string; name: string; priority: 'P0' | 'P1' | 'P2'; desc: string; }
-interface PRD {
-  overview: string; targetUsers: string[]; features: Feature[];
-  userStories: string[]; pages: string[];
-  entities: { name: string; fields: string[] }[];
-  assumptions: string[];
-}
-interface Design {
-  techStack: string[]; architecture: string;
-  pageTree: { path: string; component: string; description: string }[];
-  dataModels: { name: string; fields: { name: string; type: string }[] }[];
-  apis: { method: string; path: string; description: string }[];
-}
-interface Codegen {
-  files: { path: string; content: string }[];
-  dependencies: string[];
-  runCommand: string;
-  notes: string[];
-}
-interface Deploy {
-  target: 'local' | 'cloud' | 'git';
-  url: string;
-  repoUrl: string;
-  buildLog: string;
-  status: 'success' | 'failed';
-}
-interface Prototype {
-  appName: string; designStyle: string;
-  html: string;
-  pages: { id: string; title: string }[];
-  flows: { name: string; description: string }[];
-}
-
-const STAGE_LABEL: Record<Stage, string> = {
-  requirement: '需求拆解',
-  prototype: '产品原型',
-  design: '方案设计',
-  codegen: '代码生成',
-  deploy: '部署发布',
-};
-
-const STAGES: Stage[] = ['requirement', 'prototype', 'design', 'codegen', 'deploy'];
+type Design = DesignDocument;
+type Codegen = CodegenDocument;
+type Deploy = DeployDocument;
+type Prototype = PrototypeDocument;
+const STAGES: Stage[] = [...STAGE_IDS];
 
 function emptyTokens(): Record<Stage, string> {
   return { requirement: '', prototype: '', design: '', codegen: '', deploy: '' };

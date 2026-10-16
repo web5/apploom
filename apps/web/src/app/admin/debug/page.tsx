@@ -1,31 +1,16 @@
 'use client';
 
 import { useRef, useState, useCallback, useEffect } from 'react';
+import type { CodegenDocument, DeployDocument, DesignDocument, PRD } from '@apploom/shared';
 
 /* ── 类型 ── */
 type Status = 'idle' | 'running' | 'done' | 'error';
 type AgentKey = 'prd' | 'design' | 'codegen' | 'deploy';
-type Priority = 'P0' | 'P1' | 'P2';
-
-interface Feature { id: string; name: string; priority: Priority; desc: string; }
-interface Entity { name: string; fields: string[]; }
-interface PRD {
-  overview: string; targetUsers: string[]; features: Feature[];
-  userStories: string[]; pages: string[]; entities: Entity[]; assumptions: string[];
-}
-interface DesignDoc {
-  techStack: string[]; architecture: string;
-  pageTree: { path: string; component: string; description: string }[];
-  dataModels: { name: string; fields: { name: string; type: string }[] }[];
-  apis: { method: string; path: string; description: string }[];
-}
-interface CodegenDoc {
-  files: { path: string; content: string }[];
-  dependencies: string[]; runCommand: string; notes: string[];
-}
-interface DeployDoc {
-  target: string; url: string; repoUrl: string; buildLog: string; status: string;
-}
+// Agent 产出的文档类型由 @apploom/shared 的 Zod 导出，不要在这里手抄
+type Priority = PRD['features'][number]['priority'];
+type DesignDoc = DesignDocument;
+type CodegenDoc = CodegenDocument;
+type DeployDoc = DeployDocument;
 
 const PRIORITY_COLOR: Record<Priority, string> = {
   P0: '#ef4444', P1: '#f59e0b', P2: '#8b5cf6',

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toLlmJsonSchema } from '../json-schema';
 
 /**
  * PRD 结构化 Schema —— 需求分析 Agent 的"输出契约"
@@ -7,7 +8,7 @@ import { z } from 'zod';
  */
 export const PRDSchema = z.object({
   /** 产品概述（定位、目标用户、核心价值） */
-  overview: z.string(),
+  overview: z.string().describe('产品概述（定位、目标用户、核心价值）'),
   /** 目标用户群体 */
   targetUsers: z.array(z.string()),
   /** 功能清单，按 P0(必须)/P1(重要)/P2(增强) 分级 */
@@ -36,45 +37,5 @@ export const PRDSchema = z.object({
 
 export type PRD = z.infer<typeof PRDSchema>;
 
-/**
- * 给 LLM 的 JSON Schema（用于 response_format=json_schema / json_object）。
- * OpenAI 兼容接口的 json_schema 不支持 zod 的复杂类型，这里手写一份等价的。
- */
-export const PRD_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    overview: { type: 'string', description: '产品概述（定位、目标用户、核心价值）' },
-    targetUsers: { type: 'array', items: { type: 'string' } },
-    features: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          priority: { type: 'string', enum: ['P0', 'P1', 'P2'] },
-          desc: { type: 'string' },
-        },
-        required: ['id', 'name', 'priority', 'desc'],
-        additionalProperties: false,
-      },
-    },
-    userStories: { type: 'array', items: { type: 'string' } },
-    pages: { type: 'array', items: { type: 'string' } },
-    entities: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          fields: { type: 'array', items: { type: 'string' } },
-        },
-        required: ['name', 'fields'],
-        additionalProperties: false,
-      },
-    },
-    assumptions: { type: 'array', items: { type: 'string' } },
-  },
-  required: ['overview', 'targetUsers', 'features', 'userStories', 'pages', 'entities', 'assumptions'],
-  additionalProperties: false,
-} as const;
+/** 给 LLM 的 JSON Schema（response_format 用）：由上面的 Zod 生成，不要手写 */
+export const PRD_JSON_SCHEMA = toLlmJsonSchema(PRDSchema);

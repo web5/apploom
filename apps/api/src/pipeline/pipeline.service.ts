@@ -26,6 +26,7 @@ import { TraceStore, summarizeUsage } from '../trace/trace.store';
 import { assertWithinBudget, pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
 import { saveArtifact } from '../artifacts/artifact';
 import { classifyError } from '@apploom/llm';
+import { STAGE_LABEL, downstreamOf, nextStageOf, stageNode, upstreamOf } from '@apploom/shared';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
 import {
@@ -264,8 +265,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       st.summary = undefined;
       d.handoffs[stage] = false;
       // 下游阶段要重新跑（上游变了，下游产出作废）
-      const idx = PIPELINE_STAGES.indexOf(stage);
-      for (const s of PIPELINE_STAGES.slice(idx + 1)) {
+      for (const s of downstreamOf(stage)) {
         if (d.stages[s].status === 'done' || d.stages[s].status === 'failed') {
           d.stages[s].status = 'pending';
           d.stages[s].result = undefined;
@@ -381,7 +381,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     // —— 交接：确认模式挂起 / 自动模式入队下一阶段 / 最后阶段完成 ——
     // 同样要求本次执行仍是当前这次（done 且 attempts 未变），否则说明已被修复/重试取代，不能代它交接
     const next = this.nextStage(stage);
-    if (doc.confirmEachStep && next) {
+    if (doc.confirmEachStep && stageNode(stage).needsConfirmation && next) {
       const handed = await this.store.mutate(docId, (d, skip) => {
         if (!this.isCurrentDone(d, stage, myAttempt)) {
           skip();
@@ -445,8 +445,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   }
 
   private nextStage(stage: PipelineStage): PipelineStage | null {
-    const i = PIPELINE_STAGES.indexOf(stage);
-    return i >= 0 && i < PIPELINE_STAGES.length - 1 ? PIPELINE_STAGES[i + 1] : null;
+    return nextStageOf(stage);
   }
 
   private async enqueueStage(docId: string, stage: PipelineStage): Promise<void> {
@@ -620,11 +619,10 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 各阶段依赖的上游产物；缺失时直接失败，不能把 undefined 拼进 prompt */
-  private static readonly UPSTREAM: Partial<Record<PipelineStage, Array<{ stage: PipelineStage; label: string }>>> = {
-    prototype: [{ stage: 'requirement', label: '需求拆解' }],
-    design: [{ stage: 'requirement', label: '需求拆解' }, { stage: 'prototype', label: '产品原型' }],
-    codegen: [{ stage: 'design', label: '方案设计' }, { stage: 'prototype', label: '产品原型' }],
-  };
+  /** 各阶段必须已产出的上游（由 STAGE_GRAPH 的入边推导） */
+  private static readonly UPSTREAM = Object.fromEntries(
+    PIPELINE_STAGES.map((s) => [s, upstreamOf(s).map((u) => ({ stage: u, label: STAGE_LABEL[u] }))]),
+  ) as Record<PipelineStage, Array<{ stage: PipelineStage; label: string }>>;
 
   /** 执行单个 Agent 阶段，输入取自上游阶段产出 */
   private async runStage(

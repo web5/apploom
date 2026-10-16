@@ -1,0 +1,394 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`给模型的 JSON Schema 由 Zod 生成（Zod 是唯一事实源） Codegen 契约快照 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "dependencies": {
+      "description": "运行所需依赖清单（包名@版本，如 react@^18、@prisma/client；命令放 runCommand，不要放 && / 空格等）",
+      "items": {
+        "pattern": "^[a-zA-Z0-9@._\\/\\-^~*]+$",
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "files": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "完整文件内容",
+            "type": "string",
+          },
+          "path": {
+            "description": "文件路径，如 src/App.tsx",
+            "type": "string",
+          },
+        },
+        "required": [
+          "path",
+          "content",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "notes": {
+      "description": "需要用户注意的点",
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "runCommand": {
+      "description": "本地启动命令，如 npm run dev",
+      "type": "string",
+    },
+  },
+  "required": [
+    "files",
+    "dependencies",
+    "runCommand",
+    "notes",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`给模型的 JSON Schema 由 Zod 生成（Zod 是唯一事实源） Deploy 契约快照 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "buildLog": {
+      "description": "构建日志摘要",
+      "type": "string",
+    },
+    "port": {
+      "description": "期望启动的本地端口（local 目标时，如 vite 5173 / next 3000；部署前会检查占用并 kill）",
+      "maximum": 65535,
+      "minimum": 1024,
+      "type": "integer",
+    },
+    "repoUrl": {
+      "description": "Git 仓库链接（导出时，无则为空串）",
+      "type": "string",
+    },
+    "status": {
+      "description": "部署状态",
+      "enum": [
+        "success",
+        "failed",
+      ],
+      "type": "string",
+    },
+    "target": {
+      "description": "部署目标",
+      "enum": [
+        "local",
+        "cloud",
+        "git",
+      ],
+      "type": "string",
+    },
+    "url": {
+      "description": "可访问的线上地址（云托管 / 本地时）",
+      "type": "string",
+    },
+  },
+  "required": [
+    "target",
+    "url",
+    "repoUrl",
+    "buildLog",
+    "status",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`给模型的 JSON Schema 由 Zod 生成（Zod 是唯一事实源） Design 契约快照 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "apis": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string",
+          },
+          "method": {
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE",
+            ],
+            "type": "string",
+          },
+          "path": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "method",
+          "path",
+          "description",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "architecture": {
+      "description": "整体架构说明",
+      "type": "string",
+    },
+    "dataModels": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                },
+                "type": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "name",
+                "type",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "name": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "name",
+          "fields",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "pageTree": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "type": "string",
+          },
+          "description": {
+            "type": "string",
+          },
+          "path": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "path",
+          "component",
+          "description",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "techStack": {
+      "description": "技术选型（由 Agent 按场景决策）",
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+  },
+  "required": [
+    "techStack",
+    "architecture",
+    "pageTree",
+    "dataModels",
+    "apis",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`给模型的 JSON Schema 由 Zod 生成（Zod 是唯一事实源） PRD 契约快照 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "entities": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "name": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "name",
+          "fields",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "features": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "desc": {
+            "type": "string",
+          },
+          "id": {
+            "type": "string",
+          },
+          "name": {
+            "type": "string",
+          },
+          "priority": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "name",
+          "priority",
+          "desc",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "overview": {
+      "description": "产品概述（定位、目标用户、核心价值）",
+      "type": "string",
+    },
+    "pages": {
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "targetUsers": {
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "userStories": {
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+  },
+  "required": [
+    "overview",
+    "targetUsers",
+    "features",
+    "userStories",
+    "pages",
+    "entities",
+    "assumptions",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`给模型的 JSON Schema 由 Zod 生成（Zod 是唯一事实源） Prototype 契约快照 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "appName": {
+      "description": "应用名",
+      "type": "string",
+    },
+    "designStyle": {
+      "description": "整体设计风格一句话",
+      "type": "string",
+    },
+    "flows": {
+      "description": "核心用户流程说明",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "流程说明",
+            "type": "string",
+          },
+          "name": {
+            "description": "流程名",
+            "type": "string",
+          },
+        },
+        "required": [
+          "name",
+          "description",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "html": {
+      "description": "完整可预览的单文件 HTML（内嵌 CSS/JS，页面间可切换，不引用外部资源）",
+      "type": "string",
+    },
+    "pages": {
+      "description": "页面清单（与 html 内的页面一一对应）",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "页面唯一标识，如 home",
+            "type": "string",
+          },
+          "title": {
+            "description": "页面标题",
+            "type": "string",
+          },
+        },
+        "required": [
+          "id",
+          "title",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+  },
+  "required": [
+    "appName",
+    "designStyle",
+    "html",
+    "pages",
+    "flows",
+  ],
+  "type": "object",
+}
+`;

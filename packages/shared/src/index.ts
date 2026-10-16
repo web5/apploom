@@ -1,5 +1,5 @@
-export * from './types/pipeline';
-export * from './types/project';
+export * from './graph';
+export * from './json-schema';
 export * from './schemas/prd';
 export * from './schemas/design';
 export * from './schemas/codegen';

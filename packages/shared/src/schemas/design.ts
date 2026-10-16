@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toLlmJsonSchema } from '../json-schema';
 
 /**
  * DesignDocument 结构化 Schema —— 架构设计 Agent 的"输出契约"
@@ -7,9 +8,9 @@ import { z } from 'zod';
  */
 export const DesignSchema = z.object({
   /** 技术选型（由本 Agent 决策，不预设） */
-  techStack: z.array(z.string()),
+  techStack: z.array(z.string()).describe('技术选型（由 Agent 按场景决策）'),
   /** 整体架构说明 */
-  architecture: z.string(),
+  architecture: z.string().describe('整体架构说明'),
   /** 页面结构树 + 路由 */
   pageTree: z.array(
     z.object({
@@ -37,59 +38,5 @@ export const DesignSchema = z.object({
 
 export type DesignDocument = z.infer<typeof DesignSchema>;
 
-/** 给 LLM 的 JSON Schema（response_format 用） */
-export const DESIGN_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    techStack: { type: 'array', items: { type: 'string' }, description: '技术选型（由 Agent 按场景决策）' },
-    architecture: { type: 'string', description: '整体架构说明' },
-    pageTree: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          path: { type: 'string' },
-          component: { type: 'string' },
-          description: { type: 'string' },
-        },
-        required: ['path', 'component', 'description'],
-        additionalProperties: false,
-      },
-    },
-    dataModels: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          fields: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: { name: { type: 'string' }, type: { type: 'string' } },
-              required: ['name', 'type'],
-              additionalProperties: false,
-            },
-          },
-        },
-        required: ['name', 'fields'],
-        additionalProperties: false,
-      },
-    },
-    apis: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
-          path: { type: 'string' },
-          description: { type: 'string' },
-        },
-        required: ['method', 'path', 'description'],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ['techStack', 'architecture', 'pageTree', 'dataModels', 'apis'],
-  additionalProperties: false,
-} as const;
+/** 给 LLM 的 JSON Schema（response_format 用）：由上面的 Zod 生成，不要手写 */
+export const DESIGN_JSON_SCHEMA = toLlmJsonSchema(DesignSchema);
