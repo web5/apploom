@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApprovalPanel, type ApprovalView } from '@/components/studio/ApprovalPanel';
+import { errorClassMeta } from '@/components/studio/errorClass';
 
 type Stage = 'requirement' | 'prototype' | 'design' | 'codegen' | 'deploy';
 type Status = 'pending' | 'running' | 'done' | 'error' | 'waiting_confirm';
@@ -14,6 +16,8 @@ interface StageState {
   raw?: string;
   summary?: unknown;
   error?: string;
+  /** 失败类别（决定恢复策略），见 components/studio/errorClass.ts */
+  errorClass?: string;
   attempts: number;
   startedAt?: string;
   finishedAt?: string;
@@ -130,8 +134,34 @@ function StudioPageInner() {
   const [history, setHistory] = useState<PipelineDocSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [logOpen, setLogOpen] = useState<Stage | null>(null);
+  const [approvals, setApprovals] = useState<ApprovalView[]>([]);
   const esRef = useRef<EventSource | null>(null);
   const docIdRef = useRef<string | null>(null);
+
+  /** 拉取当前待审批项（页面刷新 / SSE 重连后 approval 事件不会重放，以接口为准） */
+  const refreshApprovals = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/pipeline/${id}/approvals`);
+      if (!res.ok || docIdRef.current !== id) return;
+      const { items } = (await res.json()) as { items: ApprovalView[] };
+      setApprovals(items);
+    } catch { /* 静默：下次 snapshot / approval 事件会再同步 */ }
+  }, []);
+
+  /** 人工决策：404 表示已超时或已被处理，直接从列表移除 */
+  const decideApproval = useCallback(async (a: ApprovalView, decision: 'approve' | 'reject') => {
+    try {
+      const res = await fetch(`/api/pipeline/${a.docId}/approvals/${a.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      if (!res.ok && res.status !== 404) setError(await res.text());
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setApprovals((prev) => prev.filter((x) => x.id !== a.id));
+  }, []);
 
   /** 订阅 SSE 进度流。后端事件见 pipeline.controller.ts */
   const subscribe = useCallback((id: string) => {
@@ -141,7 +171,9 @@ function StudioPageInner() {
     docIdRef.current = id;
     sessionStorage.setItem('apploom:lastPipeline', id);
     setError('');
+    setApprovals([]);
     setConnected(true);
+    void refreshApprovals(id);
 
     // 兼容连接时直接推 doc 与 { doc } 两种形态
     const parseDoc = (e: MessageEvent): PipelineDoc => {
@@ -149,10 +181,13 @@ function StudioPageInner() {
       return (data?.doc ?? data) as PipelineDoc;
     };
 
-    es.addEventListener('snapshot', (e) => setDoc(parseDoc(e as MessageEvent)));
+    es.addEventListener('snapshot', (e) => {
+      setDoc(parseDoc(e as MessageEvent));
+      void refreshApprovals(id);
+    });
     es.addEventListener('stage', (e) => {
-      const { stage, status, summary, result } = JSON.parse((e as MessageEvent).data) as {
-        stage: Stage; status: StageStatus; summary?: unknown; result?: unknown;
+      const { stage, status, summary, result, error: stageError, errorClass } = JSON.parse((e as MessageEvent).data) as {
+        stage: Stage; status: StageStatus; summary?: unknown; result?: unknown; error?: string; errorClass?: string;
       };
       setDoc((prev) => prev ? {
         ...prev,
@@ -163,9 +198,20 @@ function StudioPageInner() {
             status,
             summary: summary ?? prev.stages[stage].summary,
             result: result ?? prev.stages[stage].result,
+            // 失败时带上真实原因与类别；其它状态清掉旧的失败信息
+            error: status === 'failed' ? stageError ?? prev.stages[stage].error : undefined,
+            errorClass: status === 'failed' ? errorClass ?? prev.stages[stage].errorClass : undefined,
           },
         },
       } : prev);
+    });
+    es.addEventListener('approval', (e) => {
+      const { approval } = JSON.parse((e as MessageEvent).data) as { approval: ApprovalView };
+      setApprovals((prev) => (prev.some((a) => a.id === approval.id) ? prev : [...prev, approval]));
+    });
+    es.addEventListener('approval-resolved', (e) => {
+      const { id: resolvedId } = JSON.parse((e as MessageEvent).data) as { id: string };
+      setApprovals((prev) => prev.filter((a) => a.id !== resolvedId));
     });
     es.addEventListener('token', (e) => {
       const { stage, token } = JSON.parse((e as MessageEvent).data) as { stage: Stage; token: string };
@@ -178,6 +224,7 @@ function StudioPageInner() {
     es.addEventListener('done', (e) => {
       const { doc } = JSON.parse((e as MessageEvent).data);
       setDoc(doc);
+      setApprovals([]);
       setConnected(false);
       es.close();
     });
@@ -188,7 +235,7 @@ function StudioPageInner() {
 
     // 原生连接错误：EventSource 会自动重连（心跳兜底），仅提示
     es.onerror = () => setConnected(false);
-  }, []);
+  }, [refreshApprovals]);
 
   /** 创建异步任务并订阅进度 */
   async function start() {
@@ -395,6 +442,8 @@ function StudioPageInner() {
         <button className="btn btn-ghost" onClick={loadHistory}>📚 历史项目</button>
       </header>
 
+      <ApprovalPanel approvals={approvals} onDecide={decideApproval} />
+
       {/* 历史项目面板 */}
       {showHistory && (
         <div className="history-overlay" onClick={() => setShowHistory(false)}>
@@ -544,7 +593,15 @@ function StudioPageInner() {
                     {st === 'error' && (
                       <div className="stage-body">
                         <div className="confirm-box fail-box">
-                          <span>❌ {stageState?.error || '执行失败'}</span>
+                          <span className="fail-text">
+                            ❌ {stageState?.error || '执行失败'}
+                            {errorClassMeta(stageState?.errorClass) && (
+                              <span className="fail-class" data-testid="error-class">
+                                <b className="badge badge-error">{errorClassMeta(stageState?.errorClass)!.label}</b>
+                                <i>{errorClassMeta(stageState?.errorClass)!.hint}</i>
+                              </span>
+                            )}
+                          </span>
                           <div className="row">
                             <button className="btn btn-edit" onClick={() => {
                               // 失败时默认用 error 信息作为反馈预填，用户可改或留空
@@ -714,6 +771,12 @@ function StudioPageInner() {
         .stage-body { margin-top:10px; display:flex; flex-direction:column; gap:10px; }
         .confirm-box { display:flex; align-items:center; justify-content:space-between; gap:10px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:12px; color:#92400e; }
         .fail-box { background:#fef2f2; border-color:#fca5a5; color:#991b1b; }
+        .fail-text { display:flex; flex-direction:column; gap:6px; flex:1; min-width:0; word-break:break-word; white-space:pre-wrap; }
+        .fail-class { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:11px; color:#7f1d1d; white-space:normal; }
+        .fail-class b { flex:none; white-space:nowrap; }
+        .fail-class i { font-style:normal; opacity:.85; flex:1 1 160px; min-width:0; }
+        .fail-box .row { flex:none; }
+        .fail-box .btn { white-space:nowrap; }
         .stage-actions { display:flex; justify-content:flex-end; }
         .repair-box { display:flex; flex-direction:column; gap:8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; }
         .repair-ta { min-height:64px; font-size:13px; }

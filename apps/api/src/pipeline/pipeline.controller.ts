@@ -153,7 +153,7 @@ export class PipelineController {
       switch (event.type) {
         case 'stage':
           eventName = 'stage';
-          payload = { stage: event.stage, status: event.status, summary: event.summary, result: event.result };
+          payload = { stage: event.stage, status: event.status, summary: event.summary, result: event.result, error: event.error, errorClass: event.errorClass };
           break;
         case 'token':
           eventName = 'token';

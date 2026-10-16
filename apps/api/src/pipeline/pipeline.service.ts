@@ -327,6 +327,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
           type: 'stage',
           stage,
           status: 'failed',
+          error: failure.message,
+          errorClass: failure.errorClass,
           ...(failure.keepResult && result ? { summary: result.summary, result: result.result } : {}),
         });
         this.bus.emit(docId, { type: 'job', status: 'failed' });
