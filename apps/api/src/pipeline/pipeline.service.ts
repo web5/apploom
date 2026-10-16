@@ -19,7 +19,8 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { Job, Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
-import { LlmService, type RepairContext } from '../prd/llm.service';
+import { LlmService } from '../prd/llm.service';
+import type { RepairContext } from '../agent/repair';
 import { LocalDeployService } from '../deploy/local-deploy.service';
 import { CodegenGateService, formatFailures, gateMaxRepairs, gateMode } from '../gate/codegen-gate';
 import { TraceStore, summarizeUsage } from '../trace/trace.store';
