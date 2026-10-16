@@ -33,6 +33,22 @@ export interface LLMProviderConfig {
   streamUsage?: boolean;
   /** 主模型 transient 错误重试耗尽后切换的备用模型（LLM_FALLBACK_PROVIDER；备用自身不再有备用） */
   fallback?: LLMProviderConfig;
+  /** 附加请求体字段（LLM_EXTRA_BODY，JSON 对象），如 {"thinking":{"type":"disabled"}} 关闭推理；核心字段（model/messages/stream）不可被覆盖 */
+  extraBody?: Record<string, unknown>;
+}
+
+/** 解析 LLM_EXTRA_BODY；不是 JSON 对象则告警并忽略（不让一个配置笔误拖垮所有调用） */
+export function extraBodyFromEnv(): Record<string, unknown> | undefined {
+  const raw = process.env.LLM_EXTRA_BODY;
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw);
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
+  } catch {
+    // 落到下面的告警
+  }
+  console.error('[LLM] LLM_EXTRA_BODY 不是合法的 JSON 对象，已忽略');
+  return undefined;
 }
 
 /** LLM_STREAM_USAGE=1/0 可覆盖 provider 默认 */
@@ -78,6 +94,8 @@ export function loadProviderFromEnv(): LLMProviderConfig {
     );
   }
   const primary = resolveProvider(name, apiKey);
+  // 附加请求体只作用于主模型：备用模型可能不认这些参数（会 400）
+  primary.extraBody = extraBodyFromEnv();
 
   const fbName = process.env.LLM_FALLBACK_PROVIDER as ProviderName | undefined;
   if (fbName && fbName !== name) {

@@ -37,7 +37,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const num = (v: string | undefined, d: number) => (v && Number.isFinite(Number(v)) ? Number(v) : d);
 
 async function main() {
-  const model = loadProviderFromEnv().model;
+  const provider = loadProviderFromEnv();
+  const model = provider.model;
+  console.log(`模型出口: ${new URL(provider.baseURL).host}（评测期间所有 LLM 请求只会发往该主机，且由网关统一发出）`);
   const label = arg('label') ?? model;
   const only = arg('cases')?.split(',');
   const cases = only ? EVAL_CASES.filter((c) => only.includes(c.id)) : EVAL_CASES;

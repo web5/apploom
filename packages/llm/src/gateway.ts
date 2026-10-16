@@ -143,6 +143,7 @@ async function chatOnce(config: LLMProviderConfig, options: ChatOptions, attempt
   messages.push({ role: 'user', content: options.user });
 
   const body: Record<string, unknown> = {
+    ...config.extraBody,
     model: config.model,
     messages,
     temperature: options.temperature ?? 0.7,

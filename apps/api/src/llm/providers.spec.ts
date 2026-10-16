@@ -1,7 +1,7 @@
-import { loadProviderFromEnv } from '@apploom/llm';
+import { extraBodyFromEnv, loadProviderFromEnv } from '@apploom/llm';
 
 describe('loadProviderFromEnv 备用模型', () => {
-  const keys = ['LLM_PROVIDER', 'LLM_FALLBACK_PROVIDER', 'DEEPSEEK_API_KEY', 'HUNYUAN_API_KEY'];
+  const keys = ['LLM_PROVIDER', 'LLM_FALLBACK_PROVIDER', 'DEEPSEEK_API_KEY', 'HUNYUAN_API_KEY', 'LLM_EXTRA_BODY'];
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     keys.forEach((k) => (saved[k] = process.env[k]));
@@ -9,6 +9,7 @@ describe('loadProviderFromEnv 备用模型', () => {
     process.env.DEEPSEEK_API_KEY = 'ds';
     delete process.env.LLM_FALLBACK_PROVIDER;
     delete process.env.HUNYUAN_API_KEY;
+    delete process.env.LLM_EXTRA_BODY;
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => {
@@ -41,5 +42,20 @@ describe('loadProviderFromEnv 备用模型', () => {
   it('缺主 key 抛 permission 类错误', () => {
     delete process.env.DEEPSEEK_API_KEY;
     expect(() => loadProviderFromEnv()).toThrow(expect.objectContaining({ errorClass: 'permission' }));
+  });
+
+  it('LLM_EXTRA_BODY：合法 JSON 对象挂到主模型，不传给备用模型', () => {
+    process.env.LLM_EXTRA_BODY = '{"thinking":{"type":"disabled"}}';
+    process.env.LLM_FALLBACK_PROVIDER = 'hunyuan';
+    process.env.HUNYUAN_API_KEY = 'hy';
+    const p = loadProviderFromEnv();
+    expect(p.extraBody).toEqual({ thinking: { type: 'disabled' } });
+    expect(p.fallback?.extraBody).toBeUndefined();
+  });
+
+  it.each(['not json', '[1,2]', '"str"', '42'])('LLM_EXTRA_BODY 非法（%s）：告警并忽略', (raw) => {
+    process.env.LLM_EXTRA_BODY = raw;
+    expect(extraBodyFromEnv()).toBeUndefined();
+    expect(loadProviderFromEnv().extraBody).toBeUndefined();
   });
 });

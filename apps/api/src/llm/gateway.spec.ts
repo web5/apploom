@@ -116,6 +116,15 @@ describe('chat 网关', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('extraBody 合并进请求体，但不能覆盖 model / messages / stream', async () => {
+    fetchMock.mockResolvedValue(okJson('ok'));
+    await chat({ ...config, extraBody: { thinking: { type: 'disabled' }, model: 'evil', messages: [], stream: true } }, { user: 'u' });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.thinking).toEqual({ type: 'disabled' });
+    expect(body).toMatchObject({ model: 'm', stream: false });
+    expect(body.messages).toHaveLength(1);
+  });
+
   describe('备用模型', () => {
     const fallback = { baseURL: 'http://backup.test/v1', apiKey: 'k2', model: 'backup-m', supportsJsonSchema: false };
     const withFallback = { ...config, fallback };
