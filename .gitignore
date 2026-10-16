@@ -31,3 +31,7 @@ packages/database/prisma/dev.db*
 
 # 评测运行结果（基线放在 apps/api/eval/baselines/，需要提交）
 apps/api/eval/results/
+
+# vim 临时文件
+*.swp
+*.swo
