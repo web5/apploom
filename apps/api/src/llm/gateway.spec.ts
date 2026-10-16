@@ -13,6 +13,7 @@ describe('错误分类', () => {
     expect(classifyHttpStatus(429)).toBe('transient');
     expect(classifyHttpStatus(503)).toBe('transient');
     expect(classifyHttpStatus(401)).toBe('permission');
+    expect(classifyHttpStatus(402)).toBe('budget');
     expect(classifyHttpStatus(404)).toBe('not_found');
     expect(classifyHttpStatus(400)).toBe('invalid_input');
   });
@@ -61,6 +62,13 @@ describe('chat 网关', () => {
     const err = await chat(config, { user: 'u' }).catch((e) => e);
     expect(err).toBeInstanceOf(LlmError);
     expect(err.errorClass).toBe('permission');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('402 服务商额度用完：归为 budget，不重试', async () => {
+    fetchMock.mockImplementation(async () => new Response('{"error":{"message":"quota exhausted"}}', { status: 402 }));
+    const err = await chat(config, { user: 'u' }).catch((e) => e);
+    expect(err.errorClass).toBe('budget');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

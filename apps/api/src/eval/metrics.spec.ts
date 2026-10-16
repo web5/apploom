@@ -52,7 +52,7 @@ describe('buildCaseResult', () => {
 
 describe('summarize / compare', () => {
   const pass = (id: string, tokens: number, extra: object = {}) => ({ ...buildCaseResult({ ...def, id }, docWith({ gate: { passed: true, repairRounds: 0 } }), [attempt({ usage: { promptTokens: tokens, completionTokens: 0 } })], 1000), ...extra });
-  const fail = (id: string) => buildCaseResult({ ...def, id }, docWith(undefined, 'failed', 'transient'), [attempt({ outcome: 'failed' })], 1000);
+  const fail = (id: string) => buildCaseResult({ ...def, id }, docWith(undefined, 'failed', 'verification'), [attempt({ outcome: 'failed' })], 1000);
 
   it('跳过的用例不计入分母', () => {
     const t = summarize([pass('a', 100), fail('b'), skippedResult({ ...def, id: 'c' }, '预算用尽')]);
@@ -82,5 +82,28 @@ describe('summarize / compare', () => {
     expect(md).toContain('| a | ✅ |');
     expect(md).toContain('| b | ❌ |');
     expect(md).toContain('存在回退');
+  });
+});
+
+describe('环境原因失败 = 无法判定', () => {
+  const base = (id: string) => buildCaseResult({ ...def, id }, docWith({ gate: { passed: true, repairRounds: 0 } }), [attempt({})], 1000);
+  const infra = (id: string, cls: string) => buildCaseResult({ ...def, id }, docWith(undefined, 'failed', cls), [attempt({ outcome: 'failed' })], 1000);
+
+  it.each(['budget', 'permission', 'transient', 'not_found'])('%s 类失败标记为 inconclusive，且不算通过', (cls) => {
+    expect(infra('x', cls)).toMatchObject({ passed: false, inconclusive: true });
+  });
+
+  it.each(['verification', 'invalid_output', 'execution', 'unknown'])('%s 类失败是代码/模型层面的真实失败，不是 inconclusive', (cls) => {
+    expect(infra('x', cls).inconclusive).toBe(false);
+  });
+
+  it('汇总排除无法判定的用例，对比时不算回退，并提示重跑', () => {
+    const baseline = buildReport('b', 'm', '', [base('a'), base('b')]);
+    const current = buildReport('c', 'm', '', [base('a'), infra('b', 'budget')]);
+    expect(current.totals).toMatchObject({ cases: 1, passed: 1, passRate: 1, inconclusive: 1 });
+    const cmp = compareReports(current, baseline);
+    expect(cmp.regressed).toBe(false);
+    expect(cmp.lines.join('\n')).toMatch(/无法判定：b 因环境原因失败（budget）/);
+    expect(formatMarkdown(current, cmp)).toMatch(/无法判定.*环境原因 budget/);
   });
 });

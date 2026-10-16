@@ -6,7 +6,7 @@
  *  invalid_output 模型输出不符合契约（JSON/Zod 失败） → 不盲目重试，把校验错误回喂模型
  *  permission     鉴权失败 / 权限不足（401/403）      → 不重试，需要人处理
  *  not_found      模型或资源不存在（404）            → 不重试
- *  budget         超出预算                           → 终止
+ *  budget         超出预算 / 服务商额度用完（402）    → 终止，需人处理
  *  verification   确定性门禁未通过（如 codegen 门禁） → 已内部修复过，不再重试
  *  execution      本地执行失败（如部署 install）      → 不自动重试，交给人
  *  unknown        其它                               → 记录并终止
@@ -37,6 +37,8 @@ export class LlmError extends Error {
 export function classifyHttpStatus(status: number): ErrorClass {
   if (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) return 'transient';
   if (status === 401 || status === 403) return 'permission';
+  // 402：服务商额度用完 / 欠费。重试和换提示词都没用，必须由人充值或换模型，按预算类处理（终止）
+  if (status === 402) return 'budget';
   if (status === 404) return 'not_found';
   if (status >= 400) return 'invalid_input';
   return 'unknown';

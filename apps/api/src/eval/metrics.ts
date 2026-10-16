@@ -18,11 +18,16 @@ interface GateSummary {
   checks?: Array<{ name: string; ok: boolean }>;
 }
 
+/** 这些类别的失败来自环境（额度/鉴权/网络/模型不存在），不能说明代码变好或变坏 */
+const INFRA_ERROR_CLASSES = new Set(['budget', 'permission', 'transient', 'not_found']);
+
 export interface EvalCaseResult {
   id: string;
   title: string;
   /** 跑到 codegen 完成且（若有校验）门禁通过 = 本用例通过 */
   passed: boolean;
+  /** 因环境原因失败（额度用完 / 鉴权 / 网络等），结果无法用于判断代码好坏，汇总与对比时排除 */
+  inconclusive?: boolean;
   reachedCodegen: boolean;
   stageStatus: Record<string, string>;
   failure?: { stage: string; errorClass?: string; message: string };
@@ -41,6 +46,8 @@ export interface EvalCaseResult {
 
 export interface EvalTotals {
   cases: number;
+  /** 因环境原因无法判定的用例数（不计入 cases / 通过率） */
+  inconclusive: number;
   passed: number;
   passRate: number;
   firstTryRate: number;
@@ -65,6 +72,7 @@ export function buildCaseResult(def: EvalCaseDef, doc: PipelineDoc, attempts: At
 
   const gate = (codegen.summary as { gate?: GateSummary } | undefined)?.gate;
   const failedStage = STAGES.find((s) => doc.stages[s].status === 'failed');
+  const failedClass = failedStage ? doc.stages[failedStage].errorClass : undefined;
 
   const tokens = attempts.reduce(
     (acc, a) => {
@@ -89,6 +97,7 @@ export function buildCaseResult(def: EvalCaseDef, doc: PipelineDoc, attempts: At
     id: def.id,
     title: def.title,
     passed: reachedCodegen && gateOk,
+    inconclusive: !(reachedCodegen && gateOk) && !!failedClass && INFRA_ERROR_CLASSES.has(failedClass),
     reachedCodegen,
     stageStatus,
     failure: failedStage
@@ -126,9 +135,10 @@ const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.le
 
 /** 汇总只统计实际执行过的用例（跳过的不计入分母） */
 export function summarize(cases: EvalCaseResult[]): EvalTotals {
-  const ran = cases.filter((c) => !c.skipped);
+  const ran = cases.filter((c) => !c.skipped && !c.inconclusive);
   return {
     cases: ran.length,
+    inconclusive: cases.filter((c) => c.inconclusive).length,
     passed: ran.filter((c) => c.passed).length,
     passRate: ran.length ? ran.filter((c) => c.passed).length / ran.length : 0,
     firstTryRate: ran.length ? ran.filter((c) => c.firstTry).length / ran.length : 0,
@@ -168,6 +178,10 @@ export function compareReports(current: EvalReport, baseline: EvalReport): Compa
   for (const cur of current.cases) {
     const base = baseline.cases.find((x) => x.id === cur.id);
     if (!base || cur.skipped || base.skipped) continue;
+    if (cur.inconclusive) {
+      lines.push(`? 无法判定：${cur.id} 因环境原因失败（${cur.failure?.errorClass}），不计入对比，请修复环境后重跑该用例`);
+      continue;
+    }
     if (base.passed && !cur.passed) {
       regressed = true;
       lines.push(`⚠ 回退：${cur.id} 原本通过，现在失败（${cur.failure?.errorClass ?? '未知'}: ${cur.failure?.message ?? ''}）`);
@@ -181,6 +195,7 @@ export function compareReports(current: EvalReport, baseline: EvalReport): Compa
 export function formatMarkdown(report: EvalReport, comparison?: Comparison): string {
   const rows = report.cases.map((c) => {
     if (c.skipped) return `| ${c.id} | 跳过 | - | - | - | - | ${c.skipped} |`;
+    if (c.inconclusive) return `| ${c.id} | ⚠ 无法判定 | - | ${c.autoRepairs} | ${c.tokens.total}${c.tokens.estimated ? '(估)' : ''} | ${sec(c.durationMs)} | 环境原因 ${c.failure?.errorClass}: ${c.failure?.message} |`;
     const gate = c.gate ? `${c.gate.passed ? '通过' : '未通过'}（修复 ${c.gate.repairRounds} 轮）` : '无需校验';
     const note = c.failure ? `${c.failure.stage}/${c.failure.errorClass ?? '?'}: ${c.failure.message}` : c.firstTry ? '一次通过' : '';
     return `| ${c.id} | ${c.passed ? '✅' : '❌'} | ${gate} | ${c.autoRepairs} | ${c.tokens.total}${c.tokens.estimated ? '(估)' : ''} | ${sec(c.durationMs)} | ${note} |`;
@@ -193,7 +208,7 @@ export function formatMarkdown(report: EvalReport, comparison?: Comparison): str
     '|---|---|---|---|---|---|---|',
     ...rows,
     '',
-    `通过 ${t.passed}/${t.cases}（${pct(t.passRate)}），一次通过 ${pct(t.firstTryRate)}，平均 ${t.avgTokens} token / ${sec(t.avgDurationMs)}`,
+    `通过 ${t.passed}/${t.cases}（${pct(t.passRate)}），一次通过 ${pct(t.firstTryRate)}，平均 ${t.avgTokens} token / ${sec(t.avgDurationMs)}${t.inconclusive ? `；另有 ${t.inconclusive} 个用例因环境原因无法判定（不计入）` : ''}`,
   ];
   if (comparison) out.push('', '### 与基线对比', ...comparison.lines.map((l) => `- ${l}`), comparison.regressed ? '\n**结论：存在回退**' : '\n**结论：未发现回退**');
   return out.join('\n');

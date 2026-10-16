@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApprovalPanel, type ApprovalView } from '@/components/studio/ApprovalPanel';
 import { errorClassMeta } from '@/components/studio/errorClass';
+import { buildPreviewHtml, PREVIEW_SANDBOX } from '@/components/studio/previewHtml';
 
 type Stage = 'requirement' | 'prototype' | 'design' | 'codegen' | 'deploy';
 type Status = 'pending' | 'running' | 'done' | 'error' | 'waiting_confirm';
@@ -1133,9 +1134,9 @@ function PrototypeView({ prototype }: { prototype: Prototype }) {
         <h4>交互预览</h4>
         <iframe
           className="proto-frame"
-          srcDoc={prototype.html}
+          srcDoc={buildPreviewHtml(prototype.html)}
           title="产品原型预览"
-          sandbox="allow-scripts allow-same-origin allow-modals"
+          sandbox={PREVIEW_SANDBOX}
         />
       </section>
       <section>

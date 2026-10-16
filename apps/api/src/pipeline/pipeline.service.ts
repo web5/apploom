@@ -424,7 +424,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       let failure: StageFailure | undefined;
 
       // 预算守卫：基线 = 本流水线此前所有执行的用量；每次调用模型前再叠加本次已产生的用量
-      const baseline = totalTokens(sumUsage(await this.trace.list(docId).catch(() => [])));
+      const baseline = totalTokens(await this.priorUsage(docId, doc));
       const guard = () => assertWithinBudget(baseline + totalTokens(summarizeUsage(logs)));
 
       try {
@@ -530,6 +530,26 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * 本流水线此前已消耗的用量（预算基线）。trace 读取失败时不能当 0（预算会在故障期间失效），
+   * 退化为文档里各阶段已保存的 LLM 日志用量——只含每阶段最近一次执行，是下限估计，但好过没有。
+   */
+  private async priorUsage(docId: string, doc: PipelineDoc): Promise<{ promptTokens: number; completionTokens: number }> {
+    try {
+      return sumUsage(await this.trace.list(docId));
+    } catch (e) {
+      this.logger.warn(`读取 trace 失败，预算基线退化为文档内已保存日志的用量（下限估计）: ${(e as Error).message}`);
+      return summarizeUsage(PIPELINE_STAGES.flatMap((s) => doc.stages[s]?.llmLogs ?? []));
+    }
+  }
+
+  /** 各阶段依赖的上游产物；缺失时直接失败，不能把 undefined 拼进 prompt */
+  private static readonly UPSTREAM: Partial<Record<PipelineStage, Array<{ stage: PipelineStage; label: string }>>> = {
+    prototype: [{ stage: 'requirement', label: '需求拆解' }],
+    design: [{ stage: 'requirement', label: '需求拆解' }, { stage: 'prototype', label: '产品原型' }],
+    codegen: [{ stage: 'design', label: '方案设计' }, { stage: 'prototype', label: '产品原型' }],
+  };
+
   /** 执行单个 Agent 阶段，输入取自上游阶段产出 */
   private async runStage(
     stage: PipelineStage,
@@ -541,6 +561,10 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     guard: () => void,
   ): Promise<StageRunResult> {
     const onLog = (entry: LlmLogEntry) => logs.push(entry);
+    const missing = PipelineService.UPSTREAM[stage]?.find((u) => !doc.stages[u.stage]?.result);
+    if (missing) {
+      return { raw: '', error: `上游「${missing.label}」产物缺失，无法继续（请先完成该阶段）`, errorClass: 'invalid_input', llmLogs: logs };
+    }
     switch (stage) {
       case 'requirement': {
         const r = await this.llm.generatePrd(doc.requirement, onToken, repair, onLog);
