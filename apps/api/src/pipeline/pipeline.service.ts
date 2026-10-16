@@ -19,7 +19,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { Job, Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
-import { LlmService } from '../prd/llm.service';
+import { LlmService, type RepairContext } from '../prd/llm.service';
 import { LocalDeployService } from '../deploy/local-deploy.service';
 import { CodegenGateService, formatFailures, gateMaxRepairs, gateMode } from '../gate/codegen-gate';
 import { TraceStore, summarizeUsage } from '../trace/trace.store';
@@ -73,7 +73,7 @@ interface StageOutcome {
   logs: LlmLogEntry[];
 }
 
-/** 模型输出不合规时，自动带校验错误回喂模型重新生成的最大轮数（STAGE_AUTO_REPAIRS，默认 1） */
+/** 模型输出不合规（含被 token 上限截断）时，自动回喂错误重新生成的最大轮数（STAGE_AUTO_REPAIRS，默认 1） */
 function stageAutoRepairs(): number {
   const n = Number(process.env.STAGE_AUTO_REPAIRS ?? 1);
   return Number.isInteger(n) && n >= 0 ? n : 1;
@@ -394,7 +394,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 构造带反馈的重生成上下文（有 feedback 或上次失败时） */
-  private buildRepair(stage: PipelineStage, doc: PipelineDoc): { feedback: string; previous?: unknown; previousError?: string } | undefined {
+  private buildRepair(stage: PipelineStage, doc: PipelineDoc): RepairContext | undefined {
     const state = doc.stages[stage];
     if (!state.feedback) return undefined;
     const lastHistory = state.history?.[state.history.length - 1];
@@ -415,6 +415,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     const maxAuto = stageAutoRepairs();
     const onToken = (token: string) => this.bus.emit(docId, { type: 'token', stage, token });
     let repair = userRepair;
+    let truncations = 0;
     let trigger: AttemptTrigger = userRepair ? 'repair' : firstN > 1 ? 'retry' : 'initial';
 
     for (let auto = 0; ; auto++) {
@@ -463,6 +464,21 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       };
       await this.trace.append(record);
 
+      if (failure?.errorClass === 'truncated' && auto < maxAuto) {
+        // 截断：原样重试必然再被截断。放大输出上限并要求精简；被截断的半截输出不回喂（既无法解析又白占 token）
+        truncations++;
+        onToken(`\n[auto-repair] 输出被 token 上限截断，放大上限并要求精简后重新生成（${auto + 1}/${maxAuto}）\n`);
+        const feedback = [
+          userRepair?.feedback,
+          '上一次输出因超出 token 上限被截断，JSON 不完整。请在保持功能完整的前提下精简输出：减少文件/页面数量，去掉注释、重复样板与冗长文案，确保完整、合法的 JSON 能在上限内输出完毕。',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        repair = { feedback, previous: userRepair?.previous, previousError: failure.message, maxTokensLevel: truncations };
+        trigger = 'auto-repair';
+        continue;
+      }
+
       if (failure?.errorClass === 'invalid_output' && auto < maxAuto) {
         onToken(`\n[auto-repair] 输出未通过校验，回喂错误后重新生成（${auto + 1}/${maxAuto}）\n`);
         const feedback = [
@@ -471,7 +487,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         ]
           .filter(Boolean)
           .join('\n\n');
-        repair = { feedback, previous: userRepair?.previous, previousError: failure.message };
+        repair = { feedback, previous: userRepair?.previous, previousError: failure.message, maxTokensLevel: truncations || undefined };
         trigger = 'auto-repair';
         continue;
       }
@@ -486,7 +502,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   private async runCodegenWithGate(
     docId: string,
     doc: PipelineDoc,
-    userRepair: { feedback: string; previous?: unknown; previousError?: string } | undefined,
+    userRepair: RepairContext | undefined,
     onToken: (token: string) => void,
     onLog: (entry: LlmLogEntry) => void,
     logs: LlmLogEntry[],
@@ -498,7 +514,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     let r = await generate(userRepair);
     const mode = gateMode();
     if (mode === 'off' || r.error || !r.codegen) {
-      return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error, llmLogs: logs };
+      return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
     }
 
     const maxRepairs = gateMaxRepairs();
@@ -523,9 +539,9 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       onToken(`[gate] 未通过（${report.failures.length} 项），回喂模型修复…\n`);
       const feedback = [userRepair?.feedback, formatFailures(report.failures)].filter(Boolean).join('\n\n');
       guard();
-      r = await generate({ feedback, previous: r.codegen });
+      r = await generate({ feedback, previous: r.codegen, maxTokensLevel: userRepair?.maxTokensLevel });
       if (r.error || !r.codegen) {
-        return { raw: r.raw, error: r.error ?? '修复轮次未产出有效代码', llmLogs: logs };
+        return { raw: r.raw, error: r.error ?? '修复轮次未产出有效代码', errorClass: r.errorClass, llmLogs: logs };
       }
     }
   }
@@ -557,7 +573,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     docId: string,
     onToken: (token: string) => void,
     logs: LlmLogEntry[],
-    repair: { feedback: string; previous?: unknown; previousError?: string } | undefined,
+    repair: RepairContext | undefined,
     guard: () => void,
   ): Promise<StageRunResult> {
     const onLog = (entry: LlmLogEntry) => logs.push(entry);
@@ -568,14 +584,14 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     switch (stage) {
       case 'requirement': {
         const r = await this.llm.generatePrd(doc.requirement, onToken, repair, onLog);
-        return { raw: r.raw, result: r.prd, summary: r.summary, error: r.error, llmLogs: logs };
+        return { raw: r.raw, result: r.prd, summary: r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
       }
       case 'prototype': {
         const r = await this.llm.generatePrototype(doc.stages.requirement.result, onToken, repair, onLog);
         // 完整 HTML 另存为文件（doc 里仍保留一份供前端预览）；写文件失败不影响阶段结果
         const html = (r.prototype as { html?: unknown } | undefined)?.html;
         const htmlFile = typeof html === 'string' ? await saveArtifact(docId, 'prototype.html', html).catch(() => undefined) : undefined;
-        return { raw: r.raw, result: r.prototype, summary: htmlFile && r.summary ? { ...r.summary, htmlFile } : r.summary, error: r.error, llmLogs: logs };
+        return { raw: r.raw, result: r.prototype, summary: htmlFile && r.summary ? { ...r.summary, htmlFile } : r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
       }
       case 'design': {
         const r = await this.llm.generateDesign(
@@ -585,7 +601,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
           repair,
           onLog,
         );
-        return { raw: r.raw, result: r.design, summary: r.summary, error: r.error, llmLogs: logs };
+        return { raw: r.raw, result: r.design, summary: r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
       }
       case 'codegen':
         return this.runCodegenWithGate(docId, doc, repair, onToken, onLog, logs, guard);
@@ -601,7 +617,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
         // 1) LLM 决策部署方案（target: local / cloud / git），repair 反馈也走 LLM
         const r = await this.llm.generateDeploy(codegen, onToken, repair, onLog);
-        if (r.error) return { raw: r.raw, error: r.error, llmLogs: logs };
+        if (r.error) return { raw: r.raw, error: r.error, errorClass: r.errorClass, llmLogs: logs };
         const deploy = r.deploy as {
           target: 'local' | 'cloud' | 'git';
           url: string;

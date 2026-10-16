@@ -123,6 +123,34 @@ describe('阶段执行：错误分类 + 自动修复 + trace', () => {
     expect(autoRepair.previous).toEqual({ old: 1 });
   });
 
+  it('被截断 → 自动重试带放大级别与精简要求；之后若变为不合规，放大级别保持，用户反馈保留', async () => {
+    const { doc, llm, records, run } = setup();
+    process.env.STAGE_AUTO_REPAIRS = '2';
+    doc.stages.requirement.feedback = '加上登录';
+    llm.generatePrd
+      .mockResolvedValueOnce({ raw: '{"a":', error: '被截断', errorClass: 'truncated' })
+      .mockResolvedValueOnce({ raw: 'x', error: 'schema 校验失败' })
+      .mockResolvedValueOnce({ raw: '{}', prd: {}, summary: {} });
+
+    await run();
+
+    const [, , second] = [0, 1, 2].map((i) => llm.generatePrd.mock.calls[i][2]);
+    expect(llm.generatePrd.mock.calls[1][2]).toMatchObject({ maxTokensLevel: 1 });
+    expect(llm.generatePrd.mock.calls[1][2].feedback).toContain('加上登录');
+    expect(llm.generatePrd.mock.calls[1][2].feedback).toContain('精简');
+    expect(second).toMatchObject({ maxTokensLevel: 1 });
+    expect(records.map((r) => r.errorClass)).toEqual(['truncated', 'invalid_output', undefined]);
+  });
+
+  it('STAGE_AUTO_REPAIRS=0：截断也不自动重试，以 truncated 失败', async () => {
+    process.env.STAGE_AUTO_REPAIRS = '0';
+    const { doc, llm, run } = setup();
+    llm.generatePrd.mockResolvedValue({ raw: '{"a":', error: '被截断', errorClass: 'truncated' });
+    await expect(run()).rejects.toThrow('被截断');
+    expect(llm.generatePrd).toHaveBeenCalledTimes(1);
+    expect(doc.stages.requirement).toMatchObject({ status: 'failed', errorClass: 'truncated' });
+  });
+
   describe('token 预算熔断', () => {
     afterEach(() => delete process.env.PIPELINE_TOKEN_BUDGET);
 

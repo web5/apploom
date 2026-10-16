@@ -4,6 +4,7 @@
  *  transient      超时 / 429 / 5xx / 网络错误        → 指数退避重试
  *  invalid_input  请求参数不合法（4xx）              → 不重试
  *  invalid_output 模型输出不符合契约（JSON/Zod 失败） → 不盲目重试，把校验错误回喂模型
+ *  truncated      输出被 max_tokens 截断（finish_reason=length） → 原样重试必然再截断：放大上限 + 要求精简后重生成
  *  permission     鉴权失败 / 权限不足（401/403）      → 不重试，需要人处理
  *  not_found      模型或资源不存在（404）            → 不重试
  *  budget         超出预算 / 服务商额度用完（402）    → 终止，需人处理
@@ -15,6 +16,7 @@ export type ErrorClass =
   | 'transient'
   | 'invalid_input'
   | 'invalid_output'
+  | 'truncated'
   | 'permission'
   | 'not_found'
   | 'budget'
@@ -69,6 +71,7 @@ export function retryPolicy(c: ErrorClass): RetryPolicy {
     case 'transient':
       return { retries: 2, backoffMs: 1000, feedbackToModel: false };
     case 'invalid_output':
+    case 'truncated':
       return { retries: 0, backoffMs: 0, feedbackToModel: true };
     default:
       return { retries: 0, backoffMs: 0, feedbackToModel: false };

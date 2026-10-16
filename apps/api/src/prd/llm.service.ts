@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { loadProviderFromEnv, chat, type LlmLogEntry } from '@apploom/llm';
+import { loadProviderFromEnv, chat, type ErrorClass, type LlmLogEntry } from '@apploom/llm';
 import { prototypeForDesign, renderPrototypeForCodegen } from './prototype-digest';
 import {
   PRDSchema,
@@ -38,6 +38,39 @@ function detectTruncation(raw: string, parsedError: string): string | null {
     return `LLM 输出疑似被 max_tokens 截断（raw 长度 ${raw.length} 字符）。错误：${parsedError}。尾部 200 字符：${JSON.stringify(tail)}`;
   }
   return null;
+}
+
+/** 模型输出解析失败 → 失败结果：finish_reason=length 是确凿的截断（truncated），其余沿用报错特征猜测（invalid_output） */
+function parseFailure(
+  raw: string,
+  finishReason: string | undefined,
+  msg: string,
+): { raw: string; error: string; errorClass?: ErrorClass } {
+  if (finishReason === 'length') {
+    return {
+      raw,
+      error: `LLM 输出被 max_tokens 截断（finish_reason=length，已输出 ${raw.length} 字符${raw.trim() ? '' : '，正文为空，推理可能耗尽了额度'}）。解析错误：${msg}`,
+      errorClass: 'truncated',
+    };
+  }
+  // 服务端明确报了非 length 的结束原因（如 stop）= 没被截断，别按报错特征乱猜；拿不到 finish_reason 时才沿用猜测
+  return { raw, error: (finishReason ? null : detectTruncation(raw, msg)) ?? msg };
+}
+
+/** 未显式设置 maxTokens 的阶段，放大时以此为基数（多数服务商的默认输出上限） */
+const DEFAULT_OUTPUT_TOKENS = 4096;
+
+/**
+ * 截断自愈：被 max_tokens 截断后的重生成按 2^level 倍放大输出上限，封顶 LLM_MAX_TOKENS_CEILING（默认 16384；
+ * DeepSeek 官方 API 上限为 8192，使用时请把它设成 8192，否则服务端会以 400 拒绝）。level 为 0 时保持原值。
+ */
+function maxTokensFor(base: number | undefined, repair?: RepairContext): number | undefined {
+  const level = repair?.maxTokensLevel ?? 0;
+  if (level <= 0) return base;
+  const configured = Number(process.env.LLM_MAX_TOKENS_CEILING);
+  const ceiling = Number.isFinite(configured) && configured > 0 ? configured : 16384;
+  const start = base ?? DEFAULT_OUTPUT_TOKENS;
+  return Math.max(start, Math.min(ceiling, start * 2 ** level));
 }
 
 /**
@@ -99,6 +132,8 @@ export interface PrdResult {
   raw: string;
   prd?: unknown;
   error?: string;
+  /** error 的类别：被 max_tokens 截断时为 'truncated'，缺省按 invalid_output 处理 */
+  errorClass?: ErrorClass;
   summary?: {
     features: number;
     p0: number;
@@ -117,6 +152,8 @@ export interface RepairContext {
   feedback: string;
   previous?: unknown;
   previousError?: string;
+  /** 截断自愈的放大级别：0/缺省 = 不放大；每被截断一次 +1，输出上限按 2^level 倍放大（见 maxTokensFor） */
+  maxTokensLevel?: number;
 }
 
 /** 拼装带反馈的 user 提示词 */
@@ -146,6 +183,7 @@ export class LlmService {
       system: REQUIREMENT_ANALYST_SYSTEM_PROMPT,
       user: `用户需求：\n${requirement}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.7,
+      maxTokens: maxTokensFor(undefined, repair),
       jsonSchema: { name: 'PRD', schema: PRD_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
       onToken,
@@ -170,7 +208,7 @@ export class LlmService {
         },
       };
     } catch (e) {
-      return { raw, error: (e as Error).message };
+      return parseFailure(raw, result.finishReason, (e as Error).message);
     }
   }
 
@@ -191,7 +229,7 @@ export class LlmService {
       system: PROTOTYPE_SYSTEM_PROMPT,
       user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.6,
-      maxTokens: 8192,
+      maxTokens: maxTokensFor(8192, repair),
       jsonSchema: { name: 'PrototypeDocument', schema: PROTOTYPE_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
       onToken,
@@ -216,8 +254,9 @@ export class LlmService {
         return buildPrototypeResult(repaired, reparsed, ['已通过本地 JSON 修复恢复（原始输出含反斜杠非法转义，已自动修正）']);
       }
     }
-    // 3) 仍失败 → 让 LLM 重新生成（带错误反馈），最多一次
+    // 3) 仍失败。被 max_tokens 截断时重生成只会再被截断，交给流水线放大上限后重跑；否则让 LLM 带错误反馈重新生成一次
     const msg = `JSON 解析失败（原始错误：${parseError}）`;
+    if (result.finishReason === 'length') return parseFailure(raw, result.finishReason, msg);
     if (!repair) {
       console.warn(`[generatePrototype] JSON 解析失败，让 LLM 重新生成 1 次：${msg}`);
       const retryResult = await this.generatePrototypeWithRepair(prd, onToken, {
@@ -229,8 +268,7 @@ export class LlmService {
       // 重试还失败，返回带详细错误的结果
       return { raw, error: `JSON 解析失败（重试后仍失败）：${msg}` };
     }
-    const truncationHint = detectTruncation(raw, msg);
-    return { raw, error: truncationHint ?? msg };
+    return parseFailure(raw, result.finishReason, msg);
   }
 
   /** 自动重试专用：复用 generatePrototype 但强制带 repair 上下文 */
@@ -261,7 +299,7 @@ export class LlmService {
       const reparsed = parsePrototype(repaired);
       if (reparsed) return buildPrototypeResult(repaired, reparsed, ['已通过 LLM 重新生成 + 本地 JSON 修复恢复']);
     }
-    return { raw, error: `JSON 解析失败（LLM 重新生成后仍无法解析）` };
+    return parseFailure(raw, result.finishReason, 'JSON 解析失败（LLM 重新生成后仍无法解析）');
   }
 
   /**
@@ -283,6 +321,7 @@ export class LlmService {
       system: ARCHITECT_SYSTEM_PROMPT,
       user: `上游 PRD：\n${JSON.stringify(prd, null, 2)}\n\n上游产品原型（页面清单与交互，pageTree 请与之对齐；已省略 HTML 实现）：\n${JSON.stringify(prototypeForDesign(prototype), null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.5,
+      maxTokens: maxTokensFor(undefined, repair),
       jsonSchema: { name: 'DesignDocument', schema: DESIGN_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
       onToken,
@@ -307,7 +346,7 @@ export class LlmService {
         },
       };
     } catch (e) {
-      return { raw, error: (e as Error).message };
+      return parseFailure(raw, result.finishReason, (e as Error).message);
     }
   }
 
@@ -331,7 +370,7 @@ export class LlmService {
       system: CODEGEN_SYSTEM_PROMPT,
       user: `上游 DesignDocument：\n${JSON.stringify(design, null, 2)}\n\n上游产品原型精简版（页面布局与交互，UI 代码请与之对齐）：\n${renderPrototypeForCodegen(prototype)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,
-      maxTokens: 8192,
+      maxTokens: maxTokensFor(8192, repair),
       jsonSchema: { name: 'CodegenDocument', schema: CODEGEN_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
       onToken,
@@ -355,9 +394,7 @@ export class LlmService {
         },
       };
     } catch (e) {
-      const msg = (e as Error).message;
-      const truncationHint = detectTruncation(raw, msg);
-      return { raw, error: truncationHint ?? msg };
+      return parseFailure(raw, result.finishReason, (e as Error).message);
     }
   }
 
@@ -378,7 +415,7 @@ export class LlmService {
       system: DEPLOYER_SYSTEM_PROMPT,
       user: `上游 CodegenDocument：\n${JSON.stringify(codegen, null, 2)}${repair ? buildRepairSuffix(repair) : ''}`,
       temperature: 0.3,
-      maxTokens: 4096,
+      maxTokens: maxTokensFor(4096, repair),
       jsonSchema: { name: 'DeployDocument', schema: DEPLOY_JSON_SCHEMA as unknown as Record<string, unknown> },
       stream: true,
       onToken,
@@ -402,9 +439,7 @@ export class LlmService {
         },
       };
     } catch (e) {
-      const msg = (e as Error).message;
-      const truncationHint = detectTruncation(raw, msg);
-      return { raw, error: truncationHint ?? msg };
+      return parseFailure(raw, result.finishReason, (e as Error).message);
     }
   }
 }
@@ -413,6 +448,8 @@ export interface PrototypeResult {
   raw: string;
   prototype?: unknown;
   error?: string;
+  /** error 的类别：被 max_tokens 截断时为 'truncated'，缺省按 invalid_output 处理 */
+  errorClass?: ErrorClass;
   summary?: {
     pages: number;
     flows: number;
@@ -425,6 +462,8 @@ export interface DesignResult {
   raw: string;
   design?: unknown;
   error?: string;
+  /** error 的类别：被 max_tokens 截断时为 'truncated'，缺省按 invalid_output 处理 */
+  errorClass?: ErrorClass;
   summary?: {
     techStack: string[];
     pages: number;
@@ -438,6 +477,8 @@ export interface CodegenResult {
   raw: string;
   codegen?: CodegenDocument;
   error?: string;
+  /** error 的类别：被 max_tokens 截断时为 'truncated'，缺省按 invalid_output 处理 */
+  errorClass?: ErrorClass;
   summary?: {
     files: number;
     dependencies: number;
@@ -450,6 +491,8 @@ export interface DeployResult {
   raw: string;
   deploy?: unknown;
   error?: string;
+  /** error 的类别：被 max_tokens 截断时为 'truncated'，缺省按 invalid_output 处理 */
+  errorClass?: ErrorClass;
   summary?: {
     target: string;
     url: string;

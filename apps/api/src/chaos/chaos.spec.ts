@@ -192,15 +192,81 @@ describe('混沌测试', () => {
     expect(doc.stages.requirement).toMatchObject({ status: 'failed', errorClass: 'invalid_output' });
   });
 
-  it('输出被 max_tokens 截断：错误信息带截断提示，回喂给模型', async () => {
+  /** 取第 n 次 fetch 的请求体 */
+  const bodyOf = (fetchMock: jest.Mock, n: number) => JSON.parse((fetchMock.mock.calls as unknown as [string, { body: string }][])[n][1].body);
+
+  it('输出被 max_tokens 截断：归为 truncated，自动放大输出上限并要求精简，不回喂半截输出', async () => {
     const cut = JSON.stringify(VALID_PRD).slice(0, 60);
-    const { fetchMock, records, run } = setup([() => okStream(cut, undefined, 'length'), () => okStream(JSON.stringify(VALID_PRD))]);
+    const { doc, fetchMock, records, run } = setup([() => okStream(cut, undefined, 'length'), () => okStream(JSON.stringify(VALID_PRD))]);
     expect(await runWithClock(run)).toBeUndefined();
 
-    expect(records[0]).toMatchObject({ outcome: 'failed', errorClass: 'invalid_output' });
-    expect(records[0].error).toMatch(/截断|JSON/);
+    expect(records.map((r) => [r.trigger, r.outcome, r.errorClass])).toEqual([
+      ['initial', 'failed', 'truncated'],
+      ['auto-repair', 'done', undefined],
+    ]);
+    expect(records[0].error).toMatch(/截断/);
     expect(records[0].llmLogs[0].finishReason).toBe('length');
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(doc.stages.requirement.status).toBe('done');
+
+    // PRD 阶段首次未设 maxTokens；放大后以 4096 为基数翻倍
+    expect(bodyOf(fetchMock, 0).max_tokens).toBeUndefined();
+    expect(bodyOf(fetchMock, 1).max_tokens).toBe(8192);
+    const prompt = bodyOf(fetchMock, 1).messages.at(-1).content as string;
+    expect(prompt).toContain('精简');
+    expect(prompt).not.toContain(cut);
+  });
+
+  it('持续被截断：放大一次后仍失败，以 truncated 终止，不死循环', async () => {
+    const cut = JSON.stringify(VALID_PRD).slice(0, 60);
+    const { doc, fetchMock, records, run } = setup([() => okStream(cut, undefined, 'length')]);
+    expect(await runWithClock(run)).toBeInstanceOf(Error);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(records.map((r) => r.errorClass)).toEqual(['truncated', 'truncated']);
+    expect(doc.stages.requirement).toMatchObject({ status: 'failed', errorClass: 'truncated' });
+  });
+
+  it('推理耗尽额度导致正文为空（finish_reason=length）：同样按 truncated 自愈', async () => {
+    const { fetchMock, records, run } = setup([() => okStream('', undefined, 'length'), () => okStream(JSON.stringify(VALID_PRD))]);
+    expect(await runWithClock(run)).toBeUndefined();
+    expect(records[0]).toMatchObject({ errorClass: 'truncated' });
+    expect(records[0].error).toMatch(/正文为空/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('finish_reason=length 但内容恰好是完整合法 JSON：照常接受，不触发自愈', async () => {
+    const { doc, fetchMock, run } = setup([() => okStream(JSON.stringify(VALID_PRD), undefined, 'length')]);
+    expect(await runWithClock(run)).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(doc.stages.requirement.status).toBe('done');
+  });
+
+  it('放大封顶 LLM_MAX_TOKENS_CEILING（如 DeepSeek 官方 API 上限 8192）', async () => {
+    process.env.LLM_MAX_TOKENS_CEILING = '4096';
+    const cut = JSON.stringify(VALID_PRD).slice(0, 60);
+    const { fetchMock, run } = setup([() => okStream(cut, undefined, 'length'), () => okStream(JSON.stringify(VALID_PRD))]);
+    expect(await runWithClock(run)).toBeUndefined();
+    expect(bodyOf(fetchMock, 1).max_tokens).toBe(4096);
+  });
+
+  it('原型阶段被截断：不在 LlmService 内白白再调一次模型，交给流水线放大后重跑', async () => {
+    const svc = new LlmService();
+    const fetchMock = jest.fn(async () => okStream('{"html":"<div>半截', undefined, 'length'));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const r = await svc.generatePrototype({ prd: 1 }, () => undefined);
+    expect(r).toMatchObject({ errorClass: 'truncated' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('代码生成放大：基数 8192 → 16384；再次放大封顶', async () => {
+    const svc = new LlmService();
+    const fetchMock = jest.fn(async () => okStream('{}'));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await svc.generateCodegen({}, {}, () => undefined, { feedback: 'x', maxTokensLevel: 1 });
+    await svc.generateCodegen({}, {}, () => undefined, { feedback: 'x', maxTokensLevel: 3 });
+    await svc.generateCodegen({}, {}, () => undefined);
+    expect([0, 1, 2].map((n) => bodyOf(fetchMock as unknown as jest.Mock, n).max_tokens)).toEqual([16384, 16384, 8192]);
   });
 
   it('JSON 合法但字段违反 schema（缺字段 / 类型错误）：归为 invalid_output 并自动修复', async () => {
