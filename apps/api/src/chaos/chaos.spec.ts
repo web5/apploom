@@ -56,6 +56,7 @@ class FakeStore {
   constructor(public doc: PipelineDoc) {}
   async get() { return structuredClone(this.doc); }
   async update(_id: string, fn: (d: PipelineDoc) => void) { fn(this.doc); return this.doc; }
+  async mutate<T>(_id: string, fn: (d: PipelineDoc, skip: () => void) => T) { const result = fn(this.doc, () => undefined); return { doc: structuredClone(this.doc), result }; }
 }
 
 function setup(script: Array<() => Response | Promise<Response>>, opts: { traceListFails?: boolean } = {}) {

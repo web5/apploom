@@ -211,7 +211,12 @@ export class PipelineController {
     }
     const ok = await this.pipeline.confirm(id, stage);
     if (!ok) {
-      res.status(404).json({ message: 'pipeline 不存在' });
+      // 区分「不存在」与「状态不允许」：连点确认时第二次是后者（已确认过），不应报成找不到
+      if (await this.pipeline.get(id)) {
+        res.status(409).json({ message: `阶段「${stage}」当前不在待确认状态（可能已被确认）` });
+      } else {
+        res.status(404).json({ message: 'pipeline 不存在' });
+      }
       return;
     }
     res.json({ ok: true });

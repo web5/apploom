@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { findSecretEnvNames, sandboxMode } from './sandbox/sandbox';
+import { corsOrigins } from './security/cors';
 
 /**
  * 同用户的进程能读到本进程「启动时」的环境变量快照，OS 级沙箱管不住这条通道。
@@ -20,7 +21,7 @@ function warnLeakyStartupEnv(): void {
 async function bootstrap() {
   warnLeakyStartupEnv();
   const app = await NestFactory.create(AppModule);
-  app.enableCors();
+  app.enableCors({ origin: corsOrigins() });
   // Next.js dev 占用 3000，API 用 3001；Next 通过 rewrites 把 /api/* 代理过来
   await app.listen(process.env.PORT ?? 3001);
 }

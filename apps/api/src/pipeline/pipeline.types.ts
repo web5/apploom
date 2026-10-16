@@ -88,6 +88,8 @@ export interface StageState {
 /** 流水线文档 —— 存 Redis，是任务状态的唯一事实来源 */
 export interface PipelineDoc {
   id: string;
+  /** 乐观锁版本：每次成功写入 +1（由 PipelineStore 维护，业务代码不要手改） */
+  version: number;
   requirement: string;
   status: PipelineStatus;
   /** 逐步确认模式：每个阶段完成后暂停等待确认（最后阶段除外） */
@@ -95,8 +97,6 @@ export interface PipelineDoc {
   /** 当前正在执行（或刚完成等待确认）的阶段 */
   currentStage: PipelineStage | null;
   stages: Record<PipelineStage, StageState>;
-  /** 已确认过的阶段（防 worker 与 confirm 竞态：先确认后 worker 才挂起） */
-  pendingConfirms: PipelineStage[];
   /** 各阶段「是否已完成交接」（入队下一阶段 / 挂起等待 / 完成流水线）。
    *  用于 job 重复执行时幂等跳过，避免崩溃重启后链式重复入队。 */
   handoffs: Record<PipelineStage, boolean>;
@@ -114,6 +114,7 @@ export function createPipelineDoc(requirement: string, confirmEachStep: boolean)
   const now = new Date().toISOString();
   return {
     id: '',
+    version: 0,
     requirement,
     status: 'created',
     confirmEachStep,
@@ -125,7 +126,6 @@ export function createPipelineDoc(requirement: string, confirmEachStep: boolean)
       codegen: emptyStage(),
       deploy: emptyStage(),
     },
-    pendingConfirms: [],
     handoffs: {
       requirement: false,
       prototype: false,

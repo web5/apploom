@@ -16,6 +16,10 @@ class FakeStore {
     fn(this.doc);
     return this.doc;
   }
+  async mutate<T>(_id: string, fn: (d: PipelineDoc, skip: () => void) => T) {
+    const result = fn(this.doc, () => undefined);
+    return { doc: structuredClone(this.doc), result };
+  }
 }
 
 const usage = { promptTokens: 100, completionTokens: 50 };
@@ -30,10 +34,11 @@ function setup(stage: PipelineStage = 'requirement') {
   const llm = { generatePrd: jest.fn(), generateDeploy: jest.fn() };
   const records: AttemptRecord[] = [];
   const trace = { append: jest.fn(async (r: AttemptRecord) => void records.push(r)), list: jest.fn(async () => records) };
-  const svc = new PipelineService(store as never, bus as never, llm as never, { deploy: jest.fn() } as never, { verify: jest.fn() } as never, trace as never);
+  const deploySvc = { deploy: jest.fn() };
+  const svc = new PipelineService(store as never, bus as never, llm as never, deploySvc as never, { verify: jest.fn() } as never, trace as never);
   (svc as unknown as { queue: unknown }).queue = { add: jest.fn() };
   const run = () => (svc as unknown as { processStage(j: unknown): Promise<void> }).processStage({ data: { docId: 'doc1', stage } });
-  return { doc, llm, records, run, bus, trace };
+  return { doc, llm, deploySvc, records, run, bus, trace, svc, queue: (svc as unknown as { queue: { add: jest.Mock } }).queue };
 }
 
 describe('阶段执行：错误分类 + 自动修复 + trace', () => {
@@ -151,6 +156,54 @@ describe('阶段执行：错误分类 + 自动修复 + trace', () => {
     expect(doc.stages.requirement).toMatchObject({ status: 'failed', errorClass: 'truncated' });
   });
 
+  describe('并发一致性', () => {
+    it('逐步确认连点：状态检查在原子修改内，只有一次通过、只入队一次', async () => {
+      const { doc, svc, queue } = setup();
+      doc.status = 'waiting_confirm';
+      doc.currentStage = 'requirement';
+      doc.stages.requirement.status = 'done';
+
+      const results = await Promise.all([svc.confirm('doc1', 'requirement'), svc.confirm('doc1', 'requirement'), svc.confirm('doc1', 'requirement')]);
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(queue.add).toHaveBeenCalledTimes(1);
+      expect(queue.add).toHaveBeenCalledWith('prototype', { docId: 'doc1', stage: 'prototype' });
+      expect(doc.currentStage).toBe('prototype');
+    });
+
+    it('阶段运行期间用户点了「修改」：旧执行跑完后丢弃结果，不覆盖修复后的新状态', async () => {
+      const { doc, llm, svc, bus, run } = setup();
+      llm.generatePrd.mockImplementation(async (_r, _t, _p, onLog) => {
+        onLog(logEntry('prd'));
+        expect(await svc.repair('doc1', 'requirement', '加上登录')).toBe(true); // 运行中途被修复请求取代
+        return { raw: '{}', prd: { stale: true }, summary: { features: 1 } };
+      });
+
+      await run(); // 不应抛错：被取代不是失败
+
+      expect(doc.stages.requirement.status).toBe('pending'); // 仍是修复后的待执行态
+      expect(doc.stages.requirement.result).toBeUndefined();
+      expect(doc.stages.requirement.feedback).toBe('加上登录');
+      expect(doc.handoffs.requirement).toBe(false);
+      const stageEvents = bus.emit.mock.calls.map((c) => c[1]).filter((e) => e.type === 'stage').map((e) => e.status);
+      expect(stageEvents).not.toContain('done');
+    });
+
+    it('被取代的执行失败了也不能把新状态改成 failed', async () => {
+      const { doc, llm, svc, run } = setup();
+      llm.generatePrd.mockImplementation(async () => {
+        await svc.repair('doc1', 'requirement', '换个思路');
+        throw new LlmError('LLM 请求失败 401', 'permission', 401);
+      });
+
+      await run();
+
+      expect(doc.stages.requirement.status).toBe('pending');
+      expect(doc.stages.requirement.errorClass).toBeUndefined();
+      expect(doc.status).toBe('running');
+    });
+  });
+
   describe('token 预算熔断', () => {
     afterEach(() => delete process.env.PIPELINE_TOKEN_BUDGET);
 
@@ -224,19 +277,56 @@ describe('阶段执行：错误分类 + 自动修复 + trace', () => {
     expect(records).toHaveLength(1); // invalid_input 不触发自动修复
   });
 
-  it('deploy 执行失败：errorClass=execution，保留 result 供诊断，不触发自动修复', async () => {
-    const { doc, llm, records, run } = setup('deploy');
+  it('deploy 本地执行失败：errorClass=execution，保留 result 供诊断，不触发自动修复', async () => {
+    const { doc, llm, deploySvc, records, run } = setup('deploy');
     doc.stages.codegen.result = { files: [{ path: 'a', content: 'b' }], dependencies: [], runCommand: 'npm start' };
     llm.generateDeploy.mockResolvedValue({
       raw: '{}',
-      deploy: { target: 'cloud', url: '', repoUrl: '', buildLog: '', status: 'failed' },
+      deploy: { target: 'local', url: '', repoUrl: '', buildLog: '', status: 'failed', port: 5173 },
       summary: { warnings: [] },
     });
+    deploySvc.deploy.mockResolvedValue({ url: '', buildLog: 'install 失败', status: 'failed' });
 
     await expect(run()).rejects.toThrow('stage deploy failed');
 
     expect(llm.generateDeploy).toHaveBeenCalledTimes(1);
     expect(records[0]).toMatchObject({ outcome: 'failed', errorClass: 'execution' });
     expect(doc.stages.deploy).toMatchObject({ status: 'failed', errorClass: 'execution', result: { status: 'failed' } });
+  });
+
+  describe('没有执行器的部署目标（cloud / git）不能假成功', () => {
+    const cloud = { raw: '{}', deploy: { target: 'cloud', url: 'https://made-up.example.com', repoUrl: '', buildLog: 'ok', status: 'success' }, summary: { warnings: [] } };
+    const local = { raw: '{}', deploy: { target: 'local', url: '', repoUrl: '', buildLog: '', status: 'success', port: 5173 }, summary: { warnings: [] } };
+    const withCodegen = (doc: PipelineDoc) => {
+      doc.stages.codegen.result = { files: [{ path: 'a', content: 'b' }], dependencies: [], runCommand: 'npm start' };
+    };
+
+    it('模型选了 cloud：不执行、不当成功；把「只支持 local」回喂后改选 local 才算数', async () => {
+      const { doc, llm, deploySvc, records, run } = setup('deploy');
+      withCodegen(doc);
+      llm.generateDeploy.mockResolvedValueOnce(cloud).mockResolvedValueOnce(local);
+      deploySvc.deploy.mockResolvedValue({ url: 'http://localhost:5173', buildLog: 'ok', status: 'success' });
+
+      await run();
+
+      expect(llm.generateDeploy).toHaveBeenCalledTimes(2);
+      expect(llm.generateDeploy.mock.calls[1][2].feedback).toContain('只支持 local');
+      expect(records.map((r) => [r.outcome, r.errorClass])).toEqual([['failed', 'invalid_output'], ['done', undefined]]);
+      expect(doc.stages.deploy.result).toMatchObject({ target: 'local', url: 'http://localhost:5173' });
+      expect(JSON.stringify(doc.stages.deploy)).not.toContain('made-up.example.com');
+    });
+
+    it('模型坚持选 git / cloud：阶段失败，没有任何假产出，也没有触发本地部署', async () => {
+      const { doc, llm, deploySvc, run } = setup('deploy');
+      withCodegen(doc);
+      llm.generateDeploy.mockResolvedValue({ ...cloud, deploy: { ...cloud.deploy, target: 'git', repoUrl: 'https://github.com/made/up' } });
+
+      await expect(run()).rejects.toThrow('当前没有执行器');
+
+      expect(deploySvc.deploy).not.toHaveBeenCalled();
+      expect(doc.stages.deploy).toMatchObject({ status: 'failed', errorClass: 'invalid_output' });
+      expect(doc.stages.deploy.result).toBeUndefined();
+      expect(doc.status).toBe('failed');
+    });
   });
 });
