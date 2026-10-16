@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApprovalPanel, type ApprovalView } from '@/components/studio/ApprovalPanel';
 import { errorClassMeta } from '@/components/studio/errorClass';
+import { StageAttempts, TraceSummary, useTrace } from '@/components/studio/TracePanel';
 import { buildPreviewHtml, PREVIEW_SANDBOX } from '@/components/studio/previewHtml';
 
 type Stage = 'requirement' | 'prototype' | 'design' | 'codegen' | 'deploy';
@@ -135,6 +136,7 @@ function StudioPageInner() {
   const [history, setHistory] = useState<PipelineDocSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [logOpen, setLogOpen] = useState<Stage | null>(null);
+  const [traceOpen, setTraceOpen] = useState<Stage | null>(null);
   const [approvals, setApprovals] = useState<ApprovalView[]>([]);
   const esRef = useRef<EventSource | null>(null);
   const docIdRef = useRef<string | null>(null);
@@ -393,6 +395,10 @@ function StudioPageInner() {
     return () => esRef.current?.close();
   }, [subscribe]);
 
+  // 阶段状态变化（含自动修复后的新 Attempt）即重拉执行记录；运行中再 4s 兜底刷新
+  const traceKey = doc ? `${doc.status}|${STAGES.map((s) => `${doc.stages[s].status}:${doc.stages[s].attempts}`).join(',')}` : '';
+  const trace = useTrace(doc?.id, traceKey, doc?.status === 'running');
+
   // ===== 派生状态 =====
   const statusOf = (s: Stage): Status => toStatus(doc?.stages[s]?.status);
   const isRunning = doc?.status === 'running';
@@ -554,10 +560,13 @@ function StudioPageInner() {
             )}
           </section>
 
+          <TraceSummary trace={trace} />
+
           <div className="pipeline">
             {STAGES.map((stage, i) => {
               const st = statusOf(stage);
               const stageState = doc?.stages[stage];
+              const attempts = trace?.items.filter((a) => a.stage === stage) ?? [];
               return (
                 <div key={stage}>
                   <div className={`stage stage-${st}`}>
@@ -565,6 +574,11 @@ function StudioPageInner() {
                       <span className="stage-num">{statusIcon(st, i + 1)}</span>
                       <span className="stage-title">{STAGE_LABEL[stage]}</span>
                       <span className={`badge badge-${st}`}>{statusLabel(st)}</span>
+                      {attempts.length > 0 && (
+                        <button className="btn btn-log" data-testid="trace-toggle" onClick={() => setTraceOpen(traceOpen === stage ? null : stage)}>
+                          📊 {attempts.length} 次执行
+                        </button>
+                      )}
                       {stageState?.llmLogs && stageState.llmLogs.length > 0 && (
                         <button className="btn btn-log" onClick={() => setLogOpen(logOpen === stage ? null : stage)}>
                           🐞 日志
@@ -631,6 +645,7 @@ function StudioPageInner() {
                     )}
                     {stageMeta(stage, prd, prototype, design, codegen, deploy)}
                   </div>
+                  {traceOpen === stage && doc && attempts.length > 0 && <StageAttempts docId={doc.id} attempts={attempts} />}
                   {i < STAGES.length - 1 && <div className="connector" />}
                 </div>
               );
