@@ -5,6 +5,7 @@
  *   GET  /pipeline/:id          当前状态快照（PipelineDoc）
  *   GET  /pipeline/:id/events   SSE 实时进度流
  *   GET  /pipeline/:id/trace    阶段执行记录列表（?stage=）；/trace/:attemptId 取完整记录
+ *   GET  /pipeline/:id/approvals 待人工审批项；POST /approvals/:aid { decision: approve|reject }
  *   POST /pipeline/:id/confirm  { stage } 逐步确认，放行下一阶段
  *   POST /pipeline/:id/retry    { stage? } 重试失败阶段
  *
@@ -31,11 +32,15 @@ import {
 import type { Request, Response } from 'express';
 import { PIPELINE_STAGES, PipelineStage } from './pipeline.types';
 import { PipelineService } from './pipeline.service';
+import { ApprovalService } from '../approval/approval.service';
 import { pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
 
 @Controller('pipeline')
 export class PipelineController {
-  constructor(private readonly pipeline: PipelineService) {}
+  constructor(
+    private readonly pipeline: PipelineService,
+    private readonly approvals: ApprovalService,
+  ) {}
 
   /** 历史项目列表（摘要，按更新时间倒序） */
   @Get()
@@ -99,6 +104,31 @@ export class PipelineController {
     res.json(record);
   }
 
+  /** 当前等待人工审批的高风险操作 */
+  @Get(':id/approvals')
+  listApprovals(@Param('id') id: string, @Res() res: Response) {
+    res.json({ items: this.approvals.list(id) });
+  }
+
+  /** 人工决策：{ decision: 'approve' | 'reject' }；已处理或已超时返回 404 */
+  @Post(':id/approvals/:approvalId')
+  decideApproval(
+    @Param('id') id: string,
+    @Param('approvalId') approvalId: string,
+    @Body() body: { decision?: string },
+    @Res() res: Response,
+  ) {
+    if (body?.decision !== 'approve' && body?.decision !== 'reject') {
+      res.status(400).json({ message: "decision 必须是 'approve' 或 'reject'" });
+      return;
+    }
+    if (!this.approvals.decide(id, approvalId, body.decision)) {
+      res.status(404).json({ message: '审批项不存在、已处理或已超时' });
+      return;
+    }
+    res.json({ ok: true });
+  }
+
   /** SSE 实时进度流 */
   @Get(':id/events')
   @Header('Content-Type', 'text/event-stream')
@@ -144,6 +174,14 @@ export class PipelineController {
         case 'snapshot':
           eventName = 'snapshot';
           payload = { doc: event.doc };
+          break;
+        case 'approval':
+          eventName = 'approval';
+          payload = { approval: event.approval };
+          break;
+        case 'approval-resolved':
+          eventName = 'approval-resolved';
+          payload = { id: event.id, decision: event.decision };
           break;
       }
       res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);

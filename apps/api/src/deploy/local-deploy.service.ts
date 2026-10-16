@@ -23,7 +23,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { promises as fs, existsSync } from 'node:fs';
 import * as path from 'node:path';
-import { createDefaultRegistry } from '@apploom/tools';
+import { createDefaultRegistry, type ApprovalDecision, type Approver } from '@apploom/tools';
+import { ApprovalService } from '../approval/approval.service';
+import { assessRunCommand, isOwnDeployProcess } from '../approval/policy';
 
 export type DeployStatus = 'success' | 'failed';
 
@@ -62,12 +64,13 @@ async function runCmd(
   cwd: string,
   onLog: (line: string) => void,
   timeoutMs: number,
+  approver: Approver,
 ): Promise<number> {
   onLog(`$ ${cmd} ${args.join(' ')}`);
   const r = await tools.execute(
     'shell',
     { command: cmd, args, cwd, timeoutMs, maxOutputBytes: 1024 * 1024 },
-    { workspace: cwd, onLog },
+    { workspace: cwd, onLog, approver },
   );
   return r.exitCode ?? 1;
 }
@@ -80,34 +83,66 @@ function parseLocalUrl(text: string): string | null {
   return m ? m[0].replace('0.0.0.0', 'localhost') : null;
 }
 
-/** 检查端口是否被占用，占用则 kill 掉占用进程，再等端口释放 */
-async function checkAndKillPort(port: number, onLog: (line: string) => void): Promise<void> {
-  const lsof = spawn('lsof', ['-ti', `:${port}`], { shell: false });
-  let out = '';
-  lsof.stdout?.on('data', (b) => (out += b.toString()));
-  lsof.stderr?.on('data', () => {});
-  await new Promise<void>((resolve) => lsof.on('exit', () => resolve()));
+/** 写盘（走 write_file 工具）：所有文件必须在 ROOT/{docId} 下（sandbox.ts 强制） */
+const ROOT = '/tmp/apploom-deploy';
 
-  const pids = out.trim().split('\n').filter(Boolean);
+/** 执行只读系统命令并收集 stdout（失败返回空串） */
+function capture(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const p = spawn(cmd, args, { shell: false });
+    let out = '';
+    p.stdout?.on('data', (b) => (out += b.toString()));
+    p.stderr?.on('data', () => {});
+    p.on('error', () => resolve(''));
+    p.on('exit', () => resolve(out));
+  });
+}
+
+async function inspectProcess(pid: string): Promise<{ name: string; cwd: string }> {
+  const name = (await capture('ps', ['-p', pid, '-o', 'comm='])).trim() || '未知';
+  const cwdLine = (await capture('lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'])).split('\n').find((l) => l.startsWith('n'));
+  return { name, cwd: cwdLine?.slice(1) ?? '' };
+}
+
+/**
+ * 释放端口。占用者若是 AppLoom 之前部署的 dev server（cwd 在部署目录下）直接终止；
+ * 其它进程属于「杀别人的进程」，必须经人工审批（HITL）。返回 null = 端口可用，否则为失败原因。
+ */
+async function freePort(
+  port: number,
+  onLog: (line: string) => void,
+  askApproval: (summary: string) => Promise<ApprovalDecision>,
+): Promise<string | null> {
+  const pids = (await capture('lsof', ['-ti', `:${port}`])).trim().split('\n').filter(Boolean);
   if (pids.length === 0) {
     onLog(`[port] ${port} 空闲`);
-    return;
+    return null;
   }
-  onLog(`[port] ${port} 被占用（PID: ${pids.join(', ')}），kill 后重启`);
+
+  // macOS 的 /tmp 是 /private/tmp 的软链，lsof 报告真实路径，两种前缀都要认
+  const roots = [ROOT, await fs.realpath(ROOT).catch(() => ROOT)];
   for (const pid of pids) {
+    const info = await inspectProcess(pid);
+    if (!isOwnDeployProcess(info.cwd, roots)) {
+      const summary = `终止占用端口 ${port} 的进程 PID ${pid}（${info.name}，cwd: ${info.cwd || '未知'}）——该进程不是 AppLoom 部署的 dev server`;
+      onLog(`[port] ${summary}，等待人工审批`);
+      const decision = await askApproval(summary);
+      if (decision !== 'allowed-once') {
+        const reason = decision === 'rejected' ? '已被拒绝' : '审批超时/不可用';
+        return `端口 ${port} 被非 AppLoom 进程 ${pid}（${info.name}）占用，终止操作${reason}，未部署`;
+      }
+    }
     try {
       process.kill(Number(pid), 'SIGKILL');
-      onLog(`[port] ✓ 已 kill ${pid}`);
+      onLog(`[port] ✓ 已 kill ${pid}（${info.name}）`);
     } catch (e) {
       onLog(`[port] ✕ kill ${pid} 失败: ${(e as Error).message}`);
     }
   }
   // 等一小会让内核释放端口
   await new Promise((r) => setTimeout(r, 500));
+  return null;
 }
-
-/** 写盘（走 write_file 工具）：所有文件必须在 ROOT/{docId} 下（sandbox.ts 强制） */
-const ROOT = '/tmp/apploom-deploy';
 
 async function writeFiles(
   docId: string,
@@ -127,6 +162,8 @@ async function writeFiles(
 @Injectable()
 export class LocalDeployService {
   private readonly logger = new Logger(LocalDeployService.name);
+
+  constructor(private readonly approvals: ApprovalService) {}
 
   async deploy(
     docId: string,
@@ -155,7 +192,7 @@ export class LocalDeployService {
     if (existsSync(path.join(root, 'package.json'))) {
       const pm = detectPackageManager(root, codegen.runCommand);
       step(`[install] ${pm.installCmd[0]} · ${codegen.dependencies.length} 个依赖（最多 5 分钟）`);
-      const installCode = await runCmd(pm.installCmd[0], pm.installCmd.slice(1), root, writeLog, 5 * 60 * 1000);
+      const installCode = await runCmd(pm.installCmd[0], pm.installCmd.slice(1), root, writeLog, 5 * 60 * 1000, this.approvals.approverFor(docId, 'deploy'));
       if (installCode !== 0) {
         writeLog(`[install] ✕ 退出码 ${installCode}`);
         step(`[install] ✕ 退出码 ${installCode}`);
@@ -173,15 +210,33 @@ export class LocalDeployService {
     }
 
     // 3) 启动 dev server（detached，后台跑）
-    // 启动前：若指定了期望端口，先检查占用，占用则 kill 掉再启动
+    const abort = (reason: string): DeployOutput => {
+      writeLog(`[deploy] ✕ ${reason}`);
+      step(`[deploy] ✕ ${reason}`);
+      return { target: 'local', url: '', repoUrl: '', buildLog: log.join('\n'), status: 'failed' };
+    };
+    const runCommand = codegen.runCommand.trim();
+
+    // 启动命令由 LLM 生成，先过策略：破坏性命令直接拒绝，可疑命令人工确认
+    const verdict = assessRunCommand(runCommand);
+    if (verdict.action === 'deny') return abort(`启动命令被策略拒绝（${verdict.reason}）: ${runCommand}`);
+    if (verdict.action === 'ask') {
+      step(`[approval] 启动命令需要人工确认: ${runCommand}`);
+      const decision = await this.approvals.request({ docId, stage: 'deploy', tool: 'dev_server', summary: `启动 dev server: ${runCommand}（${verdict.reason}）`, risk: verdict.risk });
+      if (decision !== 'allowed-once') return abort(`启动命令未获批准（${decision === 'rejected' ? '已拒绝' : '审批超时'}）: ${runCommand}`);
+    }
+
+    // 启动前：若指定了期望端口，先检查占用；自己的旧 dev server 直接终止，其它进程需人工审批
     if (port) {
-      await checkAndKillPort(port, writeLog);
+      const blocked = await freePort(port, writeLog, (summary) =>
+        this.approvals.request({ docId, stage: 'deploy', tool: 'kill_port', summary, risk: 'high' }),
+      );
+      if (blocked) return abort(blocked);
       step(`[port] 目标端口 ${port} 已就绪`);
     }
     step(`[dev] 启动 ${codegen.runCommand}（解析 URL 等待 30s）`);
     // 若 runCommand 含 shell 操作符（&& | ; 等），按空格拆会把这些字符当成参数。
     // 含元字符时改用 shell 执行（组合命令只能靠 shell 解析）；纯命令保持 shell:false 安全拆分。
-    const runCommand = codegen.runCommand.trim();
     const hasShellMeta = /[&|;<>]/.test(runCommand);
     const tokens = runCommand.split(/\s+/);
     const dev = hasShellMeta

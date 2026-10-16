@@ -25,7 +25,7 @@
 | workspace-write 默认档位 | `ToolContext.sandbox` 默认 `workspace-write` | 与 dsh 默认一致 |
 | 路径白名单（工作区根） | `resolveInWorkspace`：字符串级校验 + symlink realpath 校验 | 防 `../../etc/passwd` 与 `workspace/link -> /etc` 逃逸 |
 | 追加式会话日志（可重放） | `ToolSessionLog`（类型化事件：call/result/error/approval） | 未来可作审计、恢复、分叉 |
-| 逐次审批（allowed-once / rejected / cancelled / unavailable） | `Approver` 接口 + `requiresApproval` | **本期只预留接口**：无 approver 时放行，不阻塞 MVP |
+| 逐次审批（allowed-once / rejected / cancelled / unavailable） | `Approver` 接口 + `requiresApproval` | **已接入**（`apps/api/src/approval/`）：`ApprovalService.approverFor()` 按策略判定——白名单命令放行、破坏性命令无条件拒绝、可疑命令挂起等人审批（带超时，超时=拒绝）；SSE `approval` 事件 + `POST /pipeline/:id/approvals/:aid` 决策。不传 approver 的裸调用仍放行 |
 | 工具结果反馈循环 | `ToolResult`（ok/output/exitCode/error/meta） | 已结构化，待 LLM tool-use 接入后直接回传模型 |
 | 一切皆插件（Cordis） | 极简版：`ToolRegistry.register()` 注册表 | 不引 Cordis——20 行的 Map 注册表对当前规模足够，不过度设计 |
 | 命令输出截断（上下文即金钱） | `truncateOutput`（read 16KB / shell 32KB，可配） | 防超长输出撑爆上下文与 token 成本 |

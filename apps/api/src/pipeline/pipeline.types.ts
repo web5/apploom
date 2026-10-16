@@ -145,7 +145,23 @@ export type PipelineEvent =
   | { type: 'token'; stage: PipelineStage; token: string }
   | { type: 'job'; status: PipelineStatus }
   | { type: 'done'; doc: PipelineDoc }
-  | { type: 'error'; stage: PipelineStage; message: string };
+  | { type: 'error'; stage: PipelineStage; message: string }
+  | { type: 'approval'; approval: ApprovalView }
+  | { type: 'approval-resolved'; id: string; decision: string };
+
+/** 待人工审批的高风险操作（供 SSE / REST 展示） */
+export interface ApprovalView {
+  id: string;
+  docId: string;
+  stage: PipelineStage;
+  tool: string;
+  /** 人类可读的操作摘要 */
+  summary: string;
+  risk: 'low' | 'medium' | 'high';
+  createdAt: string;
+  /** 超过该时间未决策将视为拒绝 */
+  expiresAt: string;
+}
 
 /** 历史项目列表摘要（不含大字段 result/raw/history） */
 export interface PipelineDocSummary {

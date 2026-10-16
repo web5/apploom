@@ -15,7 +15,8 @@
 import { Injectable } from '@nestjs/common';
 import { promises as fs, existsSync } from 'node:fs';
 import * as path from 'node:path';
-import { createDefaultRegistry } from '@apploom/tools';
+import { createDefaultRegistry, type Approver } from '@apploom/tools';
+import { ApprovalService } from '../approval/approval.service';
 import { detectPackageManager } from '../deploy/local-deploy.service';
 
 export type GateMode = 'enforce' | 'warn' | 'off';
@@ -125,8 +126,11 @@ function clip(text: string, mode: 'head' | 'tail'): string {
 export class CodegenGateService {
   private readonly tools = createDefaultRegistry();
 
+  constructor(private readonly approvals: ApprovalService) {}
+
   async verify(docId: string, codegen: CodegenInput, onLog: (line: string) => void): Promise<GateReport> {
     const report: GateReport = { passed: false, failures: [], checks: [] };
+    const approver = this.approvals.approverFor(docId, 'codegen');
     const record = async (name: GateCheck, run: () => Promise<GateFailure | null>) => {
       const start = Date.now();
       const failure = await run();
@@ -163,14 +167,14 @@ export class CodegenGateService {
 
     const pm = detectPackageManager(root, codegen.runCommand);
     const installed = await record('install', async () => {
-      const r = await this.exec(pm.installCmd[0], pm.installCmd.slice(1), root, INSTALL_TIMEOUT_MS);
+      const r = await this.exec(pm.installCmd[0], pm.installCmd.slice(1), root, INSTALL_TIMEOUT_MS, approver);
       return r.ok ? null : { check: 'install', message: `${pm.name} install 失败（${r.reason}）`, detail: clip(r.output, 'tail') };
     });
     if (!installed) return report;
 
     if (existsSync(path.join(root, 'tsconfig.json')) && existsSync(path.join(root, 'node_modules/.bin/tsc'))) {
       const typecheckOk = await record('typecheck', async () => {
-        const r = await this.exec('node_modules/.bin/tsc', ['--noEmit'], root, TSC_TIMEOUT_MS);
+        const r = await this.exec('node_modules/.bin/tsc', ['--noEmit'], root, TSC_TIMEOUT_MS, approver);
         return r.ok ? null : { check: 'typecheck', message: `tsc --noEmit 未通过（${r.reason}）`, detail: clip(r.output, 'head') };
       });
       if (!typecheckOk) return report;
@@ -179,7 +183,7 @@ export class CodegenGateService {
     const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf-8')) as { scripts?: Record<string, string> };
     if (pkg.scripts?.build) {
       await record('build', async () => {
-        const r = await this.exec(pm.name, ['run', 'build'], root, BUILD_TIMEOUT_MS);
+        const r = await this.exec(pm.name, ['run', 'build'], root, BUILD_TIMEOUT_MS, approver);
         return r.ok ? null : { check: 'build', message: `${pm.name} run build 未通过（${r.reason}）`, detail: clip(r.output, 'tail') };
       });
     }
@@ -197,8 +201,8 @@ export class CodegenGateService {
     }
   }
 
-  private async exec(command: string, args: string[], cwd: string, timeoutMs: number) {
-    const r = await this.tools.execute('shell', { command, args, cwd, timeoutMs, maxOutputBytes: 256 * 1024 }, { workspace: cwd });
+  private async exec(command: string, args: string[], cwd: string, timeoutMs: number, approver: Approver) {
+    const r = await this.tools.execute('shell', { command, args, cwd, timeoutMs, maxOutputBytes: 256 * 1024 }, { workspace: cwd, approver });
     const reason = r.error ?? `退出码 ${r.exitCode ?? '未知'}`;
     return { ok: r.ok, output: r.output || r.error || '', reason };
   }
