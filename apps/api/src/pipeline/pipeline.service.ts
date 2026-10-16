@@ -21,6 +21,7 @@ import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { LlmService } from '../prd/llm.service';
 import { LocalDeployService } from '../deploy/local-deploy.service';
+import { CodegenGateService, formatFailures, gateMaxRepairs, gateMode } from '../gate/codegen-gate';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
 import {
@@ -61,6 +62,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     private readonly bus: PipelineBus,
     private readonly llm: LlmService,
     private readonly deploySvc: LocalDeployService,
+    private readonly gate: CodegenGateService,
   ) {
     this.connection = new Redis({
       host: process.env.REDIS_HOST ?? 'localhost',
@@ -365,6 +367,55 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * 代码生成 + 确定性门禁：生成 → 校验 → 未通过则把结构化失败回喂模型重新生成（最多 N 轮）。
+   * enforce 模式耗尽修复轮数后阶段失败；warn 模式只把失败记入 summary.warnings。
+   */
+  private async runCodegenWithGate(
+    docId: string,
+    doc: PipelineDoc,
+    userRepair: { feedback: string; previous?: unknown; previousError?: string } | undefined,
+    onToken: (token: string) => void,
+    onLog: (entry: LlmLogEntry) => void,
+    logs: LlmLogEntry[],
+  ): Promise<StageRunResult> {
+    const generate = (repair: typeof userRepair) =>
+      this.llm.generateCodegen(doc.stages.design.result, doc.stages.prototype.result, onToken, repair, onLog);
+
+    let r = await generate(userRepair);
+    const mode = gateMode();
+    if (mode === 'off' || r.error || !r.codegen) {
+      return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error, llmLogs: logs };
+    }
+
+    const maxRepairs = gateMaxRepairs();
+    for (let round = 0; ; round++) {
+      onToken(`\n[gate] 第 ${round + 1} 轮校验…\n`);
+      const report = await this.gate.verify(docId, r.codegen, (line) => onToken(`${line}\n`));
+      const gateSummary = { mode, passed: report.passed, repairRounds: round, checks: report.checks };
+
+      if (report.passed) {
+        return { raw: r.raw, result: r.codegen, summary: { ...r.summary, gate: gateSummary }, llmLogs: logs };
+      }
+
+      if (round >= maxRepairs) {
+        const failureText = formatFailures(report.failures);
+        if (mode === 'warn') {
+          const warnings = [...(r.summary?.warnings ?? []), ...report.failures.map((f) => `[gate:${f.check}] ${f.message}`)];
+          return { raw: r.raw, result: r.codegen, summary: { ...r.summary, warnings, gate: { ...gateSummary, failures: report.failures } }, llmLogs: logs };
+        }
+        return { raw: r.raw, error: `代码门禁未通过（已自动修复 ${round} 轮）：\n${failureText}`, llmLogs: logs };
+      }
+
+      onToken(`[gate] 未通过（${report.failures.length} 项），回喂模型修复…\n`);
+      const feedback = [userRepair?.feedback, formatFailures(report.failures)].filter(Boolean).join('\n\n');
+      r = await generate({ feedback, previous: r.codegen });
+      if (r.error || !r.codegen) {
+        return { raw: r.raw, error: r.error ?? '修复轮次未产出有效代码', llmLogs: logs };
+      }
+    }
+  }
+
   /** 执行单个 Agent 阶段，输入取自上游阶段产出 */
   private async runStage(
     stage: PipelineStage,
@@ -394,16 +445,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         );
         return { raw: r.raw, result: r.design, summary: r.summary, error: r.error, llmLogs: logs };
       }
-      case 'codegen': {
-        const r = await this.llm.generateCodegen(
-          doc.stages.design.result,
-          doc.stages.prototype.result,
-          onToken,
-          repair,
-          onLog,
-        );
-        return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error, llmLogs: logs };
-      }
+      case 'codegen':
+        return this.runCodegenWithGate(docId, doc, repair, onToken, onLog, logs);
       case 'deploy': {
         const codegen = doc.stages.codegen.result as {
           files: { path: string; content: string }[];

@@ -39,7 +39,7 @@ export interface DeployOutput {
 const tools = createDefaultRegistry();
 
 /** 识别 package manager（看 lockfile 与 runCommand） */
-function detectPackageManager(
+export function detectPackageManager(
   cwd: string,
   runCommand: string,
 ): { name: 'pnpm' | 'npm' | 'yarn'; installCmd: string[] } {

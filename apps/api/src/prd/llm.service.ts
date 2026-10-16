@@ -11,6 +11,7 @@ import {
   DESIGN_JSON_SCHEMA,
   ARCHITECT_SYSTEM_PROMPT,
   CodegenSchema,
+  type CodegenDocument,
   CODEGEN_JSON_SCHEMA,
   CODEGEN_SYSTEM_PROMPT,
   DeploySchema,
@@ -434,7 +435,7 @@ export interface DesignResult {
 
 export interface CodegenResult {
   raw: string;
-  codegen?: unknown;
+  codegen?: CodegenDocument;
   error?: string;
   summary?: {
     files: number;

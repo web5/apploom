@@ -12,10 +12,11 @@ import { PipelineController } from './pipeline.controller';
 import { PipelineService } from './pipeline.service';
 import { PipelineStore } from './pipeline.store';
 import { PipelineBus } from './pipeline.bus';
+import { CodegenGateService } from '../gate/codegen-gate';
 
 @Module({
   imports: [PrdModule, DeployModule],
   controllers: [PipelineController],
-  providers: [PipelineService, PipelineStore, PipelineBus],
+  providers: [PipelineService, PipelineStore, PipelineBus, CodegenGateService],
 })
 export class PipelineModule {}
