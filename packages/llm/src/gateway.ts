@@ -27,6 +27,8 @@ export interface LlmLogEntry {
   /** 本次调用失败时的错误类别与信息 */
   errorClass?: ErrorClass;
   error?: string;
+  /** 本次调用由备用模型完成时，记录切换原因 */
+  fallbackReason?: string;
 }
 
 export interface ChatOptions {
@@ -77,9 +79,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * - 失败抛 LlmError（带错误类别）
  */
 export async function chat(config: LLMProviderConfig, options: ChatOptions): Promise<ChatResult> {
-  const policy = retryPolicy('transient');
-  const maxRetries = options.maxRetries ?? envInt('LLM_MAX_RETRIES', policy.retries);
-
   let emitted = false;
   const wrapped: ChatOptions = {
     ...options,
@@ -91,11 +90,32 @@ export async function chat(config: LLMProviderConfig, options: ChatOptions): Pro
       : undefined,
   };
 
+  try {
+    return await chatWithRetries(config, wrapped, () => emitted);
+  } catch (e) {
+    // 主模型 transient 错误重试耗尽 → 切备用模型（已向调用方推送过 token 则不切，避免内容重复）
+    if (config.fallback && classifyError(e) === 'transient' && !emitted) {
+      const reason = `主模型 ${config.model} 不可用，已切换备用模型 ${config.fallback.model}: ${(e as Error).message}`;
+      console.error(`[LLM:${options.label ?? ''}] ${reason}`);
+      return chatWithRetries(
+        config.fallback,
+        { ...wrapped, onLog: (entry) => options.onLog?.({ ...entry, fallbackReason: reason }) },
+        () => emitted,
+      );
+    }
+    throw e;
+  }
+}
+
+async function chatWithRetries(config: LLMProviderConfig, options: ChatOptions, hasEmitted: () => boolean): Promise<ChatResult> {
+  const policy = retryPolicy('transient');
+  const maxRetries = options.maxRetries ?? envInt('LLM_MAX_RETRIES', policy.retries);
+
   for (let attempt = 0; ; attempt++) {
     try {
-      return await chatOnce(config, wrapped, attempt);
+      return await chatOnce(config, options, attempt);
     } catch (e) {
-      if (classifyError(e) === 'transient' && !emitted && attempt < maxRetries) {
+      if (classifyError(e) === 'transient' && !hasEmitted() && attempt < maxRetries) {
         const wait = policy.backoffMs * 2 ** attempt + Math.floor(Math.random() * 250);
         console.error(`[LLM:${options.label ?? ''}] transient 错误，${wait}ms 后重试（${attempt + 1}/${maxRetries}）: ${(e as Error).message}`);
         await sleep(wait);

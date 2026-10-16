@@ -31,6 +31,7 @@ import {
 import type { Request, Response } from 'express';
 import { PIPELINE_STAGES, PipelineStage } from './pipeline.types';
 import { PipelineService } from './pipeline.service';
+import { pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
 
 @Controller('pipeline')
 export class PipelineController {
@@ -80,7 +81,11 @@ export class PipelineController {
       res.status(404).json({ message: 'pipeline 不存在' });
       return;
     }
-    res.json({ items: await this.pipeline.listAttempts(id, stage as PipelineStage | undefined) });
+    // usage / budget 始终按整条流水线统计（不受 ?stage= 过滤影响），与预算熔断口径一致
+    const all = await this.pipeline.listAttempts(id);
+    const usage = sumUsage(all);
+    const items = stage ? all.filter((a) => a.stage === stage) : all;
+    res.json({ items, usage: { ...usage, totalTokens: totalTokens(usage) }, budget: pipelineTokenBudget() });
   }
 
   /** 单次执行的完整记录（含每次 LLM 调用的 prompt / 响应 / 用量，可用于复盘重放） */

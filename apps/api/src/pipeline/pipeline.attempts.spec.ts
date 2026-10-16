@@ -29,7 +29,7 @@ function setup(stage: PipelineStage = 'requirement') {
   const bus = { emit: jest.fn() };
   const llm = { generatePrd: jest.fn(), generateDeploy: jest.fn() };
   const records: AttemptRecord[] = [];
-  const trace = { append: jest.fn(async (r: AttemptRecord) => void records.push(r)) };
+  const trace = { append: jest.fn(async (r: AttemptRecord) => void records.push(r)), list: jest.fn(async () => records) };
   const svc = new PipelineService(store as never, bus as never, llm as never, { deploy: jest.fn() } as never, { verify: jest.fn() } as never, trace as never);
   (svc as unknown as { queue: unknown }).queue = { add: jest.fn() };
   const run = () => (svc as unknown as { processStage(j: unknown): Promise<void> }).processStage({ data: { docId: 'doc1', stage } });
@@ -121,6 +121,48 @@ describe('阶段执行：错误分类 + 自动修复 + trace', () => {
     expect(autoRepair.feedback).toContain('加上登录');
     expect(autoRepair.feedback).toContain('bad json');
     expect(autoRepair.previous).toEqual({ old: 1 });
+  });
+
+  describe('token 预算熔断', () => {
+    afterEach(() => delete process.env.PIPELINE_TOKEN_BUDGET);
+
+    it('累计用量已达上限：不调用模型，直接 budget 失败且不自动修复', async () => {
+      process.env.PIPELINE_TOKEN_BUDGET = '100';
+      const { doc, llm, records, run } = setup();
+      records.push({ usage: { promptTokens: 80, completionTokens: 40 } } as AttemptRecord);
+
+      await expect(run()).rejects.toThrow('token 预算已用尽');
+
+      expect(llm.generatePrd).not.toHaveBeenCalled();
+      expect(doc.stages.requirement).toMatchObject({ status: 'failed', errorClass: 'budget' });
+      expect(records.at(-1)).toMatchObject({ outcome: 'failed', errorClass: 'budget', llmCalls: 0 });
+    });
+
+    it('自动修复前预算耗尽：首轮失败后不再发起第二次调用', async () => {
+      process.env.PIPELINE_TOKEN_BUDGET = '150';
+      const { doc, llm, records, run } = setup();
+      llm.generatePrd.mockImplementation(async (_r, _t, _p, onLog) => {
+        onLog(logEntry('prd'));
+        return { raw: 'x', error: 'bad json' };
+      });
+
+      await expect(run()).rejects.toThrow('token 预算已用尽');
+
+      expect(llm.generatePrd).toHaveBeenCalledTimes(1);
+      expect(records.map((r) => r.errorClass)).toEqual(['invalid_output', 'budget']);
+      expect(doc.stages.requirement.errorClass).toBe('budget');
+    });
+
+    it('PIPELINE_TOKEN_BUDGET=0 不限制', async () => {
+      process.env.PIPELINE_TOKEN_BUDGET = '0';
+      const { doc, llm, records, run } = setup();
+      records.push({ usage: { promptTokens: 9_000_000, completionTokens: 0 } } as AttemptRecord);
+      llm.generatePrd.mockResolvedValue({ raw: '{}', prd: {}, summary: {} });
+
+      await run();
+
+      expect(doc.stages.requirement.status).toBe('done');
+    });
   });
 
   it('deploy 执行失败：errorClass=execution，保留 result 供诊断，不触发自动修复', async () => {

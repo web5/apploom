@@ -23,6 +23,7 @@ import { LlmService } from '../prd/llm.service';
 import { LocalDeployService } from '../deploy/local-deploy.service';
 import { CodegenGateService, formatFailures, gateMaxRepairs, gateMode } from '../gate/codegen-gate';
 import { TraceStore, summarizeUsage } from '../trace/trace.store';
+import { assertWithinBudget, pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
 import { classifyError } from '@apploom/llm';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
@@ -418,8 +419,13 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       let result: StageRunResult | undefined;
       let failure: StageFailure | undefined;
 
+      // 预算守卫：基线 = 本流水线此前所有执行的用量；每次调用模型前再叠加本次已产生的用量
+      const baseline = totalTokens(sumUsage(await this.trace.list(docId).catch(() => [])));
+      const guard = () => assertWithinBudget(baseline + totalTokens(summarizeUsage(logs)));
+
       try {
-        result = await this.runStage(stage, doc, docId, onToken, logs, repair);
+        guard();
+        result = await this.runStage(stage, doc, docId, onToken, logs, repair, guard);
         if (result.error) {
           failure = { message: result.error, errorClass: result.errorClass ?? 'invalid_output' };
         } else if ((result.result as { status?: string } | undefined)?.status === 'failed') {
@@ -480,6 +486,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     onToken: (token: string) => void,
     onLog: (entry: LlmLogEntry) => void,
     logs: LlmLogEntry[],
+    guard: () => void,
   ): Promise<StageRunResult> {
     const generate = (repair: typeof userRepair) =>
       this.llm.generateCodegen(doc.stages.design.result, doc.stages.prototype.result, onToken, repair, onLog);
@@ -511,6 +518,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
       onToken(`[gate] 未通过（${report.failures.length} 项），回喂模型修复…\n`);
       const feedback = [userRepair?.feedback, formatFailures(report.failures)].filter(Boolean).join('\n\n');
+      guard();
       r = await generate({ feedback, previous: r.codegen });
       if (r.error || !r.codegen) {
         return { raw: r.raw, error: r.error ?? '修复轮次未产出有效代码', llmLogs: logs };
@@ -526,6 +534,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     onToken: (token: string) => void,
     logs: LlmLogEntry[],
     repair: { feedback: string; previous?: unknown; previousError?: string } | undefined,
+    guard: () => void,
   ): Promise<StageRunResult> {
     const onLog = (entry: LlmLogEntry) => logs.push(entry);
     switch (stage) {
@@ -548,7 +557,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
         return { raw: r.raw, result: r.design, summary: r.summary, error: r.error, llmLogs: logs };
       }
       case 'codegen':
-        return this.runCodegenWithGate(docId, doc, repair, onToken, onLog, logs);
+        return this.runCodegenWithGate(docId, doc, repair, onToken, onLog, logs, guard);
       case 'deploy': {
         const codegen = doc.stages.codegen.result as {
           files: { path: string; content: string }[];

@@ -31,6 +31,8 @@ export interface LLMProviderConfig {
   supportsJsonSchema: boolean;
   /** 流式时是否请求 stream_options.include_usage 以拿到真实用量（不支持的服务商会 400，需关闭） */
   streamUsage?: boolean;
+  /** 主模型 transient 错误重试耗尽后切换的备用模型（LLM_FALLBACK_PROVIDER；备用自身不再有备用） */
+  fallback?: LLMProviderConfig;
 }
 
 /** LLM_STREAM_USAGE=1/0 可覆盖 provider 默认 */
@@ -75,5 +77,13 @@ export function loadProviderFromEnv(): LLMProviderConfig {
       'permission',
     );
   }
-  return resolveProvider(name, apiKey);
+  const primary = resolveProvider(name, apiKey);
+
+  const fbName = process.env.LLM_FALLBACK_PROVIDER as ProviderName | undefined;
+  if (fbName && fbName !== name) {
+    const fbKey = fbName === 'hunyuan' ? process.env.HUNYUAN_API_KEY : fbName === 'deepseek' ? process.env.DEEPSEEK_API_KEY : undefined;
+    if (fbKey) primary.fallback = resolveProvider(fbName, fbKey);
+    else console.error(`[LLM] LLM_FALLBACK_PROVIDER=${fbName} 无效或缺少对应 API key，已忽略备用模型`);
+  }
+  return primary;
 }

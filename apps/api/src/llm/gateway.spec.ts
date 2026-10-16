@@ -116,6 +116,52 @@ describe('chat 网关', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  describe('备用模型', () => {
+    const fallback = { baseURL: 'http://backup.test/v1', apiKey: 'k2', model: 'backup-m', supportsJsonSchema: false };
+    const withFallback = { ...config, fallback };
+
+    it('主模型 transient 耗尽后切到备用模型，日志记录切换原因', async () => {
+      fetchMock.mockImplementation(async (url: string) => (url.startsWith('http://backup') ? okJson('from backup') : new Response('down', { status: 503 })));
+      const logs: LlmLogEntry[] = [];
+      const r = await chat(withFallback, { user: 'u', maxRetries: 0, onLog: (l) => logs.push(l) });
+
+      expect(r.content).toBe('from backup');
+      expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['http://llm.test/v1/chat/completions', 'http://backup.test/v1/chat/completions']);
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).model).toBe('backup-m');
+      expect(logs[0].fallbackReason).toBeUndefined();
+      expect(logs[1]).toMatchObject({ model: 'backup-m' });
+      expect(logs[1].fallbackReason).toContain('已切换备用模型 backup-m');
+    });
+
+    it('权限错误（401）不切备用：换模型解决不了鉴权问题', async () => {
+      fetchMock.mockImplementation(async () => new Response('bad key', { status: 401 }));
+      const err = await chat(withFallback, { user: 'u', maxRetries: 0 }).catch((e) => e);
+      expect(err.errorClass).toBe('permission');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('已向调用方推送过 token 后失败：不切备用，避免内容重复', async () => {
+      let pulls = 0;
+      const body = new ReadableStream({
+        pull(c) {
+          if (pulls++ === 0) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'x' } }] })}\n\n`));
+          else c.error(new TypeError('fetch failed'));
+        },
+      });
+      fetchMock.mockResolvedValue(new Response(body, { status: 200 }));
+      const err = await chat(withFallback, { user: 'u', stream: true, onToken: () => undefined, maxRetries: 0 }).catch((e) => e);
+      expect(err.errorClass).toBe('transient');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('备用模型也失败则抛出备用模型的错误', async () => {
+      fetchMock.mockImplementation(async () => new Response('down', { status: 503 }));
+      const err = await chat(withFallback, { user: 'u', maxRetries: 0 }).catch((e) => e);
+      expect(err.errorClass).toBe('transient');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('请求超时：抛 transient 且提示超时', async () => {
     fetchMock.mockImplementation((_url: string, init: RequestInit) => new Promise((_res, rej) => init.signal!.addEventListener('abort', () => rej(init.signal!.reason))));
     const err = await chat(config, { user: 'u', timeoutMs: 30, maxRetries: 0 }).catch((e) => e);
