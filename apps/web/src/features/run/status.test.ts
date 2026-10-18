@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { STUDIO_CSS, VIEWS_CSS } from './studioStyles';
 import { pipelineBadge, pipelineStatusLabel, statusIcon, statusLabel, toStatus } from './status';
 
 describe('status 映射', () => {
@@ -26,5 +27,18 @@ describe('status 映射', () => {
     expect(pipelineStatusLabel('completed')).toBe('已完成');
     expect(pipelineBadge('failed')).toBe('error');
     expect(pipelineBadge('created')).toBe('pending');
+  });
+});
+
+describe('样式拆分', () => {
+  it('Studio 页面样式里恰好包含一份视图样式（debug 页单独注入同一份 VIEWS_CSS，两边外观一致）', () => {
+    expect(VIEWS_CSS.length).toBeGreaterThan(500);
+    expect(STUDIO_CSS.split(VIEWS_CSS)).toHaveLength(2);
+  });
+
+  it('视图样式的选择器都以 .pv-body 为作用域或属于视图专用类，不会误伤页面其它部分', () => {
+    const selectors = VIEWS_CSS.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('/*') && l.includes('{')).map((l) => l.slice(0, l.indexOf('{')).trim());
+    const allowed = /^(\.pv-body|\.tags?|table\.ft|\.prio|\.file-(tree|item)|\.code-block|\.deploy-(success|failed)|\.build-log|\.proto-frame|\.flow-(item|desc))/;
+    expect(selectors.filter((s) => !allowed.test(s))).toEqual([]);
   });
 });

@@ -2,15 +2,14 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react';
 import type { CodegenDocument, DeployDocument, DesignDocument, PRD } from '@apploom/shared';
+import { VIEWS_CSS } from '@/features/run/studioStyles';
+import { CodegenView, DeployView, DesignView, PrdView } from '@/features/run/views';
 
 /* ── 类型 ── */
 type Status = 'idle' | 'running' | 'done' | 'error';
 type AgentKey = 'prd' | 'design' | 'codegen' | 'deploy';
 // Agent 产出的文档类型由 @apploom/shared 的 Zod 导出，不要在这里手抄
 type Priority = PRD['features'][number]['priority'];
-type DesignDoc = DesignDocument;
-type CodegenDoc = CodegenDocument;
-type DeployDoc = DeployDocument;
 
 const PRIORITY_COLOR: Record<Priority, string> = {
   P0: '#ef4444', P1: '#f59e0b', P2: '#8b5cf6',
@@ -340,107 +339,15 @@ function StageSummary({ agent, summary }: { agent: AgentKey; summary: Record<str
   );
 }
 
+/** 结果视图与 Studio 的「产出预览」共用同一套组件与样式（视图样式以 .pv-body 为作用域） */
 function ResultView({ agent, data }: { agent: AgentKey; data: unknown }) {
-  switch (agent) {
-    case 'prd': return <PrdView prd={data as PRD} />;
-    case 'design': return <DesignView doc={data as DesignDoc} />;
-    case 'codegen': return <CodegenView doc={data as CodegenDoc} />;
-    case 'deploy': return <DeployView doc={data as DeployDoc} />;
-  }
-}
-
-function PrdView({ prd }: { prd: PRD }) {
   return (
-    <div className="prd">
-      <section><h4>概述</h4><p>{prd.overview}</p></section>
-      <section><h4>目标用户</h4><div className="tags">{prd.targetUsers.map((u) => (<span key={u} className="tag">{u}</span>))}</div></section>
-      <section><h4>功能（{prd.features.length}）</h4>
-        <table className="ftable"><thead><tr><th>ID</th><th>功能</th><th>优先级</th><th>说明</th></tr></thead>
-          <tbody>{prd.features.map((f) => (
-            <tr key={f.id}><td>{f.id}</td><td>{f.name}</td><td><span className="prio" style={{ color: PRIORITY_COLOR[f.priority], borderColor: PRIORITY_COLOR[f.priority] }}>{f.priority}</span></td><td>{f.desc}</td></tr>
-          ))}</tbody>
-        </table>
-      </section>
-      <section><h4>用户故事</h4><ul>{prd.userStories.map((s, i) => (<li key={i}>{s}</li>))}</ul></section>
-      <section><h4>页面</h4><div className="tags">{prd.pages.map((p) => (<span key={p} className="tag">{p}</span>))}</div></section>
-      <section><h4>数据实体</h4><ul>{prd.entities.map((e) => (<li key={e.name}><b>{e.name}</b>: <code>{e.fields.join(', ')}</code></li>))}</ul></section>
-      <section><h4>假设</h4><ul>{prd.assumptions.map((a, i) => (<li key={i} className="assume">{a}</li>))}</ul></section>
-    </div>
-  );
-}
-
-function DesignView({ doc }: { doc: DesignDoc }) {
-  return (
-    <div className="prd">
-      <section><h4>技术栈</h4><div className="tags">{doc.techStack.map((t) => (<span key={t} className="tag">{t}</span>))}</div></section>
-      <section><h4>架构说明</h4><p>{doc.architecture}</p></section>
-      <section><h4>页面路由（{doc.pageTree.length}）</h4>
-        <table className="ftable"><thead><tr><th>路径</th><th>组件</th><th>说明</th></tr></thead>
-          <tbody>{doc.pageTree.map((p) => (<tr key={p.path}><td><code>{p.path}</code></td><td>{p.component}</td><td>{p.description}</td></tr>))}</tbody>
-        </table>
-      </section>
-      <section><h4>数据模型（{doc.dataModels.length}）</h4>
-        {doc.dataModels.map((m) => (
-          <div key={m.name} className="data-model">
-            <b>{m.name}</b>
-            <table className="ftable"><thead><tr><th>字段</th><th>类型</th></tr></thead>
-              <tbody>{m.fields.map((f) => (<tr key={f.name}><td>{f.name}</td><td><code>{f.type}</code></td></tr>))}</tbody>
-            </table>
-          </div>
-        ))}
-      </section>
-      <section><h4>API 接口（{doc.apis.length}）</h4>
-        <table className="ftable"><thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
-          <tbody>{doc.apis.map((a, i) => (
-            <tr key={i}><td><span className={`method method-${a.method}`}>{a.method}</span></td><td><code>{a.path}</code></td><td>{a.description}</td></tr>
-          ))}</tbody>
-        </table>
-      </section>
-    </div>
-  );
-}
-
-function CodegenView({ doc }: { doc: CodegenDoc }) {
-  const [activeFile, setActiveFile] = useState(0);
-  return (
-    <div className="prd">
-      <section><h4>依赖（{doc.dependencies.length}）</h4><div className="tags">{doc.dependencies.map((d) => (<span key={d} className="tag">{d}</span>))}</div></section>
-      <section><h4>启动命令</h4><pre className="code-block">$ {doc.runCommand}</pre></section>
-      <section><h4>文件（{doc.files.length}）</h4>
-        <div className="file-browser">
-          <div className="file-tree">
-            {doc.files.map((f, i) => (
-              <button key={i} className={`file-item ${i === activeFile ? 'active' : ''}`} onClick={() => setActiveFile(i)}>
-                {f.path}
-              </button>
-            ))}
-          </div>
-          <pre className="file-content">{doc.files[activeFile]?.content}</pre>
-        </div>
-      </section>
-      {doc.notes.length > 0 && (
-        <section><h4>注意事项</h4><ul>{doc.notes.map((n, i) => (<li key={i} className="assume">{n}</li>))}</ul></section>
-      )}
-    </div>
-  );
-}
-
-function DeployView({ doc }: { doc: DeployDoc }) {
-  return (
-    <div className="prd">
-      <section><h4>部署状态</h4>
-        <div className="deploy-status">
-          <span className={`deploy-badge deploy-${doc.status}`}>{doc.status === 'success' ? '✓ 成功' : '✕ 失败'}</span>
-          <span className="deploy-target">目标：{doc.target === 'cloud' ? '☁️ 云托管' : '📦 Git 仓库'}</span>
-        </div>
-      </section>
-      {doc.url && (
-        <section><h4>访问地址</h4><p><a href={doc.url} target="_blank" rel="noreferrer" className="deploy-url">{doc.url}</a></p></section>
-      )}
-      {doc.repoUrl && (
-        <section><h4>仓库链接</h4><p><a href={doc.repoUrl} target="_blank" rel="noreferrer" className="deploy-url">{doc.repoUrl}</a></p></section>
-      )}
-      <section><h4>构建日志</h4><pre className="build-log">{doc.buildLog}</pre></section>
+    <div className="pv-body">
+      <style>{VIEWS_CSS}</style>
+      {agent === 'prd' && <PrdView prd={data as PRD} />}
+      {agent === 'design' && <DesignView design={data as DesignDocument} />}
+      {agent === 'codegen' && <CodegenView codegen={data as CodegenDocument} />}
+      {agent === 'deploy' && <DeployView deploy={data as DeployDocument} />}
     </div>
   );
 }

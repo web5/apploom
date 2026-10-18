@@ -1,7 +1,7 @@
 /**
  * Studio 页面样式。原样来自重构前页面里的内联 <style>，仍以内联方式注入（不改成全局 CSS 文件，避免改变层叠顺序与特异性）。
  */
-export const STUDIO_CSS = `
+const STUDIO_BASE_CSS = `
 .page { height:100vh; display:flex; flex-direction:column; background:#f7f8fa; color:#1a1a2e; font-family:-apple-system,'PingFang SC',sans-serif; }
 .topbar { display:flex; align-items:center; justify-content:space-between; padding:12px 24px; background:#fff; border-bottom:1px solid #e5e7eb; }
 .logo { font-weight:700; font-size:15px; }
@@ -130,7 +130,14 @@ export const STUDIO_CSS = `
 .pv-body { flex:1; overflow-y:auto; padding:16px 18px; }
 .ph { color:#9ca3af; font-size:13px; line-height:1.7; }
 .raw { font-family:'SF Mono',monospace; font-size:11px; white-space:pre-wrap; word-break:break-all; color:#374151; margin:0; line-height:1.6; }
-.pv-body section { margin-bottom:16px; }
+`;
+
+/**
+ * 产出视图（PrdView / DesignView / CodegenView / DeployView / PrototypeView）用到的样式。
+ * 从页面样式里单独导出，让 Studio 与 admin/debug 两个页面用同一份视图样式、呈现同一套外观。
+ * 视图的选择器以 `.pv-body` 为作用域，使用方需要用一个 className="pv-body" 的容器包住视图。
+ */
+export const VIEWS_CSS = `.pv-body section { margin-bottom:16px; }
 .pv-body h4 { margin:0 0 6px; font-size:12px; font-weight:600; }
 .pv-body p { margin:0; font-size:12px; line-height:1.6; color:#374151; }
 .pv-body ul { margin:0; padding-left:16px; }
@@ -154,7 +161,11 @@ table.ft th { background:#f7f8fa; }
 .flow-item { padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px; }
 .flow-item b { font-size:12px; color:#1a1a2e; }
 .flow-desc { font-size:11px; color:#6b7280; margin-left:8px; }
+`;
 
-@keyframes studio-spin { to { transform:rotate(360deg); } }
+const STUDIO_KEYFRAMES_CSS = `@keyframes studio-spin { to { transform:rotate(360deg); } }
 @keyframes studio-blink { 0%,50% { opacity:1; } 51%,100% { opacity:0; } }
 `;
+
+export const STUDIO_CSS = `${STUDIO_BASE_CSS}${VIEWS_CSS}
+${STUDIO_KEYFRAMES_CSS}`;
