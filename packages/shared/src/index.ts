@@ -1,4 +1,5 @@
 export * from './graph';
+export type * from './dto';
 export * from './json-schema';
 export * from './schemas/prd';
 export * from './schemas/design';

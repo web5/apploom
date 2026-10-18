@@ -7,7 +7,9 @@
  */
 import * as path from 'node:path';
 
-export type RiskLevel = 'low' | 'medium' | 'high';
+import type { RiskLevel } from '@apploom/shared';
+
+export type { RiskLevel };
 
 export interface Verdict {
   action: 'allow' | 'ask' | 'deny';

@@ -2,18 +2,9 @@
 
 import { useEffect, useState } from 'react';
 
-/** 对齐后端 ApprovalView（apps/api/src/pipeline/pipeline.types.ts） */
-export interface ApprovalView {
-  id: string;
-  docId: string;
-  stage: string;
-  tool: string;
-  summary: string;
-  risk: 'low' | 'medium' | 'high';
-  createdAt: string;
-  /** 超过该时间未决策将视为拒绝 */
-  expiresAt: string;
-}
+import type { ApprovalView } from '@apploom/shared';
+
+export type { ApprovalView };
 
 const RISK_LABEL: Record<ApprovalView['risk'], string> = { low: '低风险', medium: '中风险', high: '高风险' };
 

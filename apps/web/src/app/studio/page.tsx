@@ -7,55 +7,11 @@ import { StageAttempts, TraceSummary, useTrace } from '@/components/studio/Trace
 import { buildPreviewHtml, PREVIEW_SANDBOX } from '@/components/studio/previewHtml';
 
 import { STAGE_IDS, STAGE_LABEL, type StageId } from '@apploom/shared/graph';
-import type { CodegenDocument, DeployDocument, DesignDocument, PRD, PrototypeDocument } from '@apploom/shared';
+import type { CodegenDocument, DeployDocument, DesignDocument, LlmLogEntry, PipelineDoc, PipelineDocSummary, PipelineStatus, PRD, PrototypeDocument, StageStatus } from '@apploom/shared';
 
 /** 阶段与展示名由 @apploom/shared 的 STAGE_GRAPH 推导；五份 Agent 产出的类型由 Zod 导出，不要在这里手抄 */
 type Stage = StageId;
 type Status = 'pending' | 'running' | 'done' | 'error' | 'waiting_confirm';
-
-// ===== 后端 PipelineDoc 契约（对齐 apps/api/src/pipeline/pipeline.types.ts）=====
-type PipelineStatus = 'created' | 'running' | 'waiting_confirm' | 'failed' | 'completed';
-type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'waiting_confirm';
-interface StageState {
-  status: StageStatus;
-  result?: unknown;
-  raw?: string;
-  summary?: unknown;
-  error?: string;
-  /** 失败类别（决定恢复策略），见 components/studio/errorClass.ts */
-  errorClass?: string;
-  attempts: number;
-  startedAt?: string;
-  finishedAt?: string;
-  llmLogs?: LlmLogEntry[];
-}
-interface LlmLogEntry {
-  label: string;
-  ts: string;
-  user: string;
-  response: string;
-}
-interface PipelineDoc {
-  id: string;
-  requirement: string;
-  status: PipelineStatus;
-  confirmEachStep: boolean;
-  currentStage: Stage | null;
-  stages: Record<Stage, StageState>;
-  handoffs: Record<Stage, boolean>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface PipelineDocSummary {
-  id: string;
-  requirement: string;
-  status: PipelineStatus;
-  currentStage: Stage | null;
-  createdAt: string;
-  updatedAt: string;
-  stages: Record<Stage, StageStatus>;
-}
 
 type Design = DesignDocument;
 type Codegen = CodegenDocument;

@@ -3,47 +3,12 @@
 import { useEffect, useState } from 'react';
 import { errorClassMeta } from './errorClass';
 
-/** 对齐后端 AttemptRecord / GET :id/trace（apps/api/src/pipeline/pipeline.types.ts） */
-export interface TraceUsage {
-  promptTokens: number;
-  completionTokens: number;
-  /** true = 服务端没返回 usage，按字符数估算 */
-  estimated?: boolean;
-}
+import type { AttemptBrief, AttemptRecord, LlmLogEntry, LlmUsage, TraceData } from '@apploom/shared';
 
-export interface AttemptBrief {
-  id: string;
-  stage: string;
-  n: number;
-  trigger: 'initial' | 'retry' | 'repair' | 'auto-repair';
-  startedAt: string;
-  durationMs: number;
-  outcome: 'done' | 'failed';
-  errorClass?: string;
-  error?: string;
-  feedback?: string;
-  usage: TraceUsage;
-  llmCalls: number;
-}
-
-export interface TraceData {
-  items: AttemptBrief[];
-  usage: TraceUsage & { totalTokens: number };
-  /** 单条流水线 token 预算（PIPELINE_TOKEN_BUDGET） */
-  budget: number;
-}
-
-interface CallDetail {
-  label: string;
-  model?: string;
-  attempt?: number;
-  durationMs?: number;
-  usage?: TraceUsage;
-  finishReason?: string;
-  errorClass?: string;
-  error?: string;
-  fallbackReason?: string;
-}
+export type { AttemptBrief, TraceData };
+type TraceUsage = LlmUsage;
+/** 明细表只用调用日志里的这几个字段 */
+type CallDetail = Omit<LlmLogEntry, 'user' | 'response' | 'ts'>;
 
 const TRIGGER_LABEL: Record<AttemptBrief['trigger'], string> = {
   initial: '首次',
@@ -157,7 +122,7 @@ function AttemptDetail({ docId, attempt }: { docId: string; attempt: AttemptBrie
       try {
         const res = await fetch(`/api/pipeline/${docId}/trace/${attempt.id}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const rec = (await res.json()) as { llmLogs?: CallDetail[] };
+        const rec = (await res.json()) as Pick<AttemptRecord, 'llmLogs'>;
         if (!cancelled) setCalls(rec.llmLogs ?? []);
       } catch (e) {
         if (!cancelled) setLoadError((e as Error).message);

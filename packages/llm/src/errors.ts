@@ -12,17 +12,10 @@
  *  execution      本地执行失败（如部署 install）      → 不自动重试，交给人
  *  unknown        其它                               → 记录并终止
  */
-export type ErrorClass =
-  | 'transient'
-  | 'invalid_input'
-  | 'invalid_output'
-  | 'truncated'
-  | 'permission'
-  | 'not_found'
-  | 'budget'
-  | 'verification'
-  | 'execution'
-  | 'unknown';
+import type { ErrorClass } from '@apploom/shared';
+
+/** 错误类别的定义在 @apploom/shared（前后端共用），这里只负责「如何分类」与「各类怎么恢复」 */
+export type { ErrorClass };
 
 export class LlmError extends Error {
   constructor(

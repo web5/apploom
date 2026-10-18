@@ -1,15 +1,5 @@
-/** 后端 ErrorClass（packages/llm/src/errors.ts）的展示文案与处置建议 */
-export type ErrorClass =
-  | 'transient'
-  | 'invalid_input'
-  | 'invalid_output'
-  | 'truncated'
-  | 'permission'
-  | 'not_found'
-  | 'budget'
-  | 'verification'
-  | 'execution'
-  | 'unknown';
+/** 错误类别（定义在 @apploom/shared）的展示文案与处置建议 */
+import type { ErrorClass } from '@apploom/shared';
 
 const META: Record<ErrorClass, { label: string; hint: string }> = {
   transient: { label: '临时故障', hint: '模型服务暂时不可用（已自动重试仍失败），稍后点「重试」即可' },

@@ -1,35 +1,9 @@
 import type { LLMProviderConfig } from './providers';
-import { LlmError, classifyError, classifyHttpStatus, retryPolicy, type ErrorClass } from './errors';
+import type { LlmLogEntry, LlmUsage } from '@apploom/shared';
+import { LlmError, classifyError, classifyHttpStatus, retryPolicy } from './errors';
 
-export interface LlmUsage {
-  promptTokens: number;
-  completionTokens: number;
-  /** true = 服务端没返回 usage，按字符数粗略估算 */
-  estimated?: boolean;
-}
-
-/** 单次 LLM 调用日志（存 doc 供前端调试入口展示，同时是 trace 的最小单元） */
-export interface LlmLogEntry {
-  label: string;
-  ts: string;
-  /** user prompt（含 repair 反馈，是调试关键） */
-  user: string;
-  /** 模型响应原文（失败时为已收到的部分内容） */
-  response: string;
-  model?: string;
-  temperature?: number;
-  durationMs?: number;
-  usage?: LlmUsage;
-  /** 模型停止原因；'length' 表示被 max_tokens 截断 */
-  finishReason?: string;
-  /** 第几次尝试（0 = 首次，>0 = 网关自动重试） */
-  attempt?: number;
-  /** 本次调用失败时的错误类别与信息 */
-  errorClass?: ErrorClass;
-  error?: string;
-  /** 本次调用由备用模型完成时，记录切换原因 */
-  fallbackReason?: string;
-}
+/** 用量与调用日志的形状定义在 @apploom/shared（前后端共用） */
+export type { LlmUsage, LlmLogEntry };
 
 export interface ChatOptions {
   /** 调用方标识（如 'generateDeploy'），日志里显示 */
