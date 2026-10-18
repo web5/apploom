@@ -61,3 +61,37 @@ model ProjectVersion {
   snapshot  Json
   createdAt DateTime @default(now())
 }
+
+/// 流水线文档（AppLoom 的运行记录）。doc 是完整文档 JSON；其余列是为列表 / 过滤 / 多租户冗余出来的摘要字段。
+/// version 做乐观并发：写入走行锁 + 同事务内 version+1，与原 Redis CAS 语义一致。
+model PipelineRun {
+  id           String   @id
+  ownerId      String?
+  requirement  String
+  status       String
+  currentStage String?
+  version      Int
+  doc          Json
+  summary      Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+
+  attempts PipelineAttempt[]
+
+  @@index([ownerId, updatedAt(sort: Desc)])
+  @@index([updatedAt(sort: Desc)])
+}
+
+/// 阶段执行记录（追加式）。完整 prompt / 响应体积大，与主文档分表存放。
+model PipelineAttempt {
+  seq       BigInt      @id @default(autoincrement())
+  runId     String
+  run       PipelineRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  attemptId String
+  stage     String
+  record    Json
+  createdAt DateTime    @default(now())
+
+  @@unique([runId, attemptId])
+  @@index([runId, seq])
+}

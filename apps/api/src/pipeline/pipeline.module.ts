@@ -10,15 +10,14 @@ import { PrdModule } from '../prd/prd.module';
 import { DeployModule } from '../deploy/deploy.module';
 import { PipelineController } from './pipeline.controller';
 import { PipelineService } from './pipeline.service';
-import { PipelineStore } from './pipeline.store';
 import { ApprovalModule } from '../approval/approval.module';
 import { CodegenGateService } from '../gate/codegen-gate';
-import { TraceStore } from '../trace/trace.store';
+import { storageProviders } from '../storage/storage.providers';
 
 @Module({
   imports: [PrdModule, DeployModule, ApprovalModule],
   controllers: [PipelineController],
   // PipelineBus 由 ApprovalModule 提供并导出（全局唯一）
-  providers: [PipelineService, PipelineStore, CodegenGateService, TraceStore],
+  providers: [PipelineService, CodegenGateService, ...storageProviders()],
 })
 export class PipelineModule {}

@@ -1,10 +1,11 @@
 /**
- * PipelineStore 集成测试：连真实 Redis（localhost，或 REDIS_HOST / REDIS_PORT），连不上则整体跳过。
+ * RedisPipelineStore 集成测试：连真实 Redis（localhost，或 REDIS_HOST / REDIS_PORT），连不上则整体跳过。
  * 验证：并发写不丢更新、version 连续无跳号、守卫在原子快照内生效、列表走索引、老数据迁移与补建索引。
  */
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
-import { ConflictError, PipelineStore, docKey } from './pipeline.store';
+import { RedisPipelineStore as PipelineStore, docKey } from './pipeline.redis-store';
+import { ConflictError } from './pipeline.store';
 import { createPipelineDoc, type PipelineDoc } from './pipeline.types';
 
 const host = process.env.REDIS_HOST ?? 'localhost';
@@ -29,7 +30,7 @@ const newDoc = (requirement = 'test'): PipelineDoc => {
   return d;
 };
 
-describe('PipelineStore（真实 Redis）', () => {
+describe('RedisPipelineStore（真实 Redis）', () => {
   let reachable = false;
   let a: PipelineStore;
   let b: PipelineStore; // 第二条连接，模拟另一个进程
