@@ -72,7 +72,7 @@ export const STAGE_GRAPH = [
     temperature: 0.3,
     inputs: [
       { from: 'design', strategy: 'full' },
-      { from: 'prototype', strategy: 'trim', note: '跨级边：原型是视觉契约；精简为设计令牌 + 结构 markup + 函数名（renderPrototypeForCodegen）' },
+      { from: 'prototype', strategy: 'trim', maxTokens: 6000, note: '跨级边：原型是视觉契约；精简为设计令牌 + 结构 markup + 函数名，超出预算时按 L1–L3 逐级降级（trimPrototypeForCodegen）' },
     ],
     needsConfirmation: true,
   },
@@ -160,6 +160,11 @@ export const STAGE_LABEL = Object.fromEntries(STAGE_GRAPH.map((n) => [n.id, n.la
 
 export function stageNode(id: StageId): StageNode {
   return NODES.find((n) => n.id === id)!;
+}
+
+/** 某条入边的 token 预算；没有声明预算的边返回 undefined（不限） */
+export function edgeBudget(stage: StageId, from: string): number | undefined {
+  return stageNode(stage).inputs.find((x) => x.from === from)?.maxTokens;
 }
 
 /** 某阶段直接消费的上游阶段（不含 @input），按注入顺序 */

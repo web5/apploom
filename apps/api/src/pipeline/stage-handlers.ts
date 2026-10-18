@@ -6,13 +6,14 @@
  * 只有带阶段特有后处理的才在 OVERRIDES 里单独写：原型存 HTML 文件、代码生成走确定性门禁、部署走真实执行器。
  */
 import type { ErrorClass } from '@apploom/llm';
-import { INPUT, STAGE_LABEL, stageNode, upstreamOf, type StageId } from '@apploom/shared';
+import { INPUT, STAGE_LABEL, edgeBudget, stageNode, upstreamOf, type StageId } from '@apploom/shared';
 import type { AgentResult, UpstreamInputs } from '../agent/agent-runner';
 import type { RepairContext } from '../agent/repair';
 import { saveArtifact } from '../artifacts/artifact';
 import type { LocalDeployService } from '../deploy/local-deploy.service';
 import { formatFailures, gateMaxRepairs, gateMode, type CodegenGateService } from '../gate/codegen-gate';
 import type { LlmService } from '../prd/llm.service';
+import { trimPrototypeForCodegen } from '../prd/prototype-digest';
 import type { LlmLogEntry, PipelineDoc } from './pipeline.types';
 
 export interface StageRunResult {
@@ -94,9 +95,18 @@ const prototypeStage: Handler = async (deps, ctx) => {
  */
 const codegenStage: Handler = async (deps, ctx) => {
   const { docId, onToken, logs, guard, repair: userRepair } = ctx;
+
+  // 原型 → 代码生成这条边有 token 预算：超出时按 L1–L3 降级并显式告知模型。把等级记进摘要、并在流里提示，裁剪不再是看不见的
+  const trim = trimPrototypeForCodegen(ctx.doc.stages.prototype.result, edgeBudget('codegen', 'prototype'));
+  const prototypeTrim = { level: trim.level, tokens: trim.tokens, budget: trim.budget, overBudget: trim.overBudget };
+  if (trim.trimmed) onToken(`\n[handoff] 原型 → 代码生成：约 ${trim.tokens} token，超出预算 ${trim.budget}，已降级到 L${trim.level}${trim.overBudget ? '（降到最低仍超预算）' : ''}\n`);
+
   let r = await callAgent(deps, ctx);
   const mode = gateMode();
-  if (mode === 'off' || r.error || !r.doc) return toResult(r, ctx);
+  if (mode === 'off' || r.error || !r.doc) {
+    const out = toResult(r, ctx);
+    return out.summary ? { ...out, summary: { ...(out.summary as object), prototypeTrim } } : out;
+  }
 
   const maxRepairs = gateMaxRepairs();
   for (let round = 0; ; round++) {
@@ -106,14 +116,14 @@ const codegenStage: Handler = async (deps, ctx) => {
     const baseSummary = (r.summary ?? {}) as { warnings?: string[] };
 
     if (report.passed) {
-      return { raw: r.raw, result: r.doc, summary: { ...baseSummary, gate: gateSummary }, llmLogs: logs };
+      return { raw: r.raw, result: r.doc, summary: { ...baseSummary, prototypeTrim, gate: gateSummary }, llmLogs: logs };
     }
 
     if (round >= maxRepairs) {
       const failureText = formatFailures(report.failures);
       if (mode === 'warn') {
         const warnings = [...(baseSummary.warnings ?? []), ...report.failures.map((f) => `[gate:${f.check}] ${f.message}`)];
-        return { raw: r.raw, result: r.doc, summary: { ...baseSummary, warnings, gate: { ...gateSummary, failures: report.failures } }, llmLogs: logs };
+        return { raw: r.raw, result: r.doc, summary: { ...baseSummary, prototypeTrim, warnings, gate: { ...gateSummary, failures: report.failures } }, llmLogs: logs };
       }
       return { raw: r.raw, error: `代码门禁未通过（已自动修复 ${round} 轮）：\n${failureText}`, errorClass: 'verification', llmLogs: logs };
     }

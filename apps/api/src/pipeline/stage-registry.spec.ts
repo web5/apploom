@@ -66,4 +66,40 @@ describe('createStageRunner', () => {
     expect(dp.gate.verify).not.toHaveBeenCalled();
     expect(dp.deploy.deploy).not.toHaveBeenCalled();
   });
+
+  describe('代码生成阶段：原型 → 代码生成这条边的预算', () => {
+    const codegenDoc = (prototype: unknown) => {
+      const d = createPipelineDoc('x', false);
+      d.stages.requirement.result = { r: 1 };
+      d.stages.prototype.result = prototype;
+      d.stages.design.result = { d: 1 };
+      return d;
+    };
+    const gatedDeps = () => ({
+      agents: { run: jest.fn(async () => ({ raw: 'r', doc: { files: [{ path: 'a', content: 'x' }], dependencies: [], runCommand: 'npm run dev', notes: [] }, summary: { warnings: [] } })) },
+      gate: { verify: jest.fn(async () => ({ passed: true, failures: [], checks: [] })) },
+      deploy: { deploy: jest.fn() },
+    });
+
+    it('典型原型在预算内：摘要里记录 L0、不提示裁剪', async () => {
+      const dp = gatedDeps();
+      const ctxx = ctx(codegenDoc({ appName: 'A', designStyle: 's', html: '<div>hi</div>', pages: [{ id: 'h', title: '首页' }], flows: [] }), 'codegen');
+      const r = await createStageRunner(dp as never)(ctxx);
+      expect(r.error).toBeUndefined();
+      expect((r.summary as { prototypeTrim: { level: number; budget: number } }).prototypeTrim).toMatchObject({ level: 0, budget: 6000 });
+      expect(ctxx.onToken.mock.calls.map((c) => c[0]).join('')).not.toContain('[handoff]');
+    });
+
+    it('原型元信息巨大、超出边预算：摘要记录降级等级，流里提示，且不影响阶段成功', async () => {
+      const dp = gatedDeps();
+      const huge = { appName: 'A', designStyle: 's', html: '<div>hi</div>', pages: Array.from({ length: 4000 }, (_, i) => ({ id: `p${i}`, title: `页面${i}` })), flows: [] };
+      const ctxx = ctx(codegenDoc(huge), 'codegen');
+      const r = await createStageRunner(dp as never)(ctxx);
+      expect(r.error).toBeUndefined();
+      const trim = (r.summary as { prototypeTrim: { level: number; overBudget: boolean; tokens: number; budget: number } }).prototypeTrim;
+      expect(trim.level).toBeGreaterThanOrEqual(2);
+      expect(trim.budget).toBe(6000);
+      expect(ctxx.onToken.mock.calls.map((c) => c[0]).join('')).toMatch(/\[handoff\] 原型 → 代码生成：约 \d+ token，超出预算 6000，已降级到 L[23]/);
+    });
+  });
 });

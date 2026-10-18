@@ -24,8 +24,8 @@ import {
   type PRD,
   type PrototypeDocument,
 } from '@apploom/shared';
-import { prototypeForDesign, renderPrototypeForCodegen } from '../prd/prototype-digest';
-import { INPUT, type StageId } from '@apploom/shared';
+import { prototypeForDesign, trimPrototypeForCodegen } from '../prd/prototype-digest';
+import { INPUT, edgeBudget, type StageId } from '@apploom/shared';
 import type { AgentSpec } from './agent-runner';
 
 export interface PrdSummary { features: number; p0: number; assumptions: number; entities: number; warnings: string[] }
@@ -106,7 +106,7 @@ export const CODEGEN_SPEC: AgentSpec<CodegenDocument, CodegenSummary> = {
   jsonSchemaName: 'CodegenDocument',
   maxTokens: 8192,
   buildUser: (i) =>
-    `上游 DesignDocument：\n${json(i.design)}\n\n上游产品原型精简版（页面布局与交互，UI 代码请与之对齐）：\n${renderPrototypeForCodegen(i.prototype)}`,
+    `上游 DesignDocument：\n${json(i.design)}\n\n上游产品原型精简版（页面布局与交互，UI 代码请与之对齐）：\n${trimPrototypeForCodegen(i.prototype, edgeBudget('codegen', 'prototype')).text}`,
   summarize: (codegen) => {
     const warnings: string[] = [];
     if (codegen.files.length === 0) warnings.push('文件列表为空');
