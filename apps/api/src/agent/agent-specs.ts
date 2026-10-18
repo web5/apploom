@@ -25,6 +25,7 @@ import {
   type PrototypeDocument,
 } from '@apploom/shared';
 import { prototypeForDesign, renderPrototypeForCodegen } from '../prd/prototype-digest';
+import { INPUT, type StageId } from '@apploom/shared';
 import type { AgentSpec } from './agent-runner';
 
 export interface PrdSummary { features: number; p0: number; assumptions: number; entities: number; warnings: string[] }
@@ -35,14 +36,14 @@ export interface DeploySummary { target: string; url: string; status: string; wa
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
 
-export const REQUIREMENT_SPEC: AgentSpec<string, PRD, PrdSummary> = {
+export const REQUIREMENT_SPEC: AgentSpec<PRD, PrdSummary> = {
   stage: 'requirement',
   label: 'generatePrd',
   system: REQUIREMENT_ANALYST_SYSTEM_PROMPT,
   schema: PRDSchema,
   jsonSchema: PRD_JSON_SCHEMA,
   jsonSchemaName: 'PRD',
-  buildUser: (requirement) => `用户需求：\n${requirement}`,
+  buildUser: (i) => `用户需求：\n${i[INPUT]}`,
   summarize: (prd) => {
     const p0 = prd.features.filter((f) => f.priority === 'P0').length;
     const warnings: string[] = [];
@@ -52,7 +53,7 @@ export const REQUIREMENT_SPEC: AgentSpec<string, PRD, PrdSummary> = {
   },
 };
 
-export const PROTOTYPE_SPEC: AgentSpec<unknown, PrototypeDocument, PrototypeSummary> = {
+export const PROTOTYPE_SPEC: AgentSpec<PrototypeDocument, PrototypeSummary> = {
   stage: 'prototype',
   label: 'generatePrototype',
   system: PROTOTYPE_SYSTEM_PROMPT,
@@ -60,7 +61,7 @@ export const PROTOTYPE_SPEC: AgentSpec<unknown, PrototypeDocument, PrototypeSumm
   jsonSchema: PROTOTYPE_JSON_SCHEMA,
   jsonSchemaName: 'PrototypeDocument',
   maxTokens: 8192,
-  buildUser: (prd) => `上游 PRD：\n${json(prd)}`,
+  buildUser: (i) => `上游 PRD：\n${json(i.requirement)}`,
   summarize: (p) => {
     const warnings: string[] = [];
     if (!p.html || p.html.trim().length < 100) warnings.push('HTML 原型为空或过短');
@@ -78,15 +79,15 @@ export const PROTOTYPE_SPEC: AgentSpec<unknown, PrototypeDocument, PrototypeSumm
   },
 };
 
-export const DESIGN_SPEC: AgentSpec<{ prd: unknown; prototype: unknown }, DesignDocument, DesignSummary> = {
+export const DESIGN_SPEC: AgentSpec<DesignDocument, DesignSummary> = {
   stage: 'design',
   label: 'generateDesign',
   system: ARCHITECT_SYSTEM_PROMPT,
   schema: DesignSchema,
   jsonSchema: DESIGN_JSON_SCHEMA,
   jsonSchemaName: 'DesignDocument',
-  buildUser: ({ prd, prototype }) =>
-    `上游 PRD：\n${json(prd)}\n\n上游产品原型（页面清单与交互，pageTree 请与之对齐；已省略 HTML 实现）：\n${json(prototypeForDesign(prototype))}`,
+  buildUser: (i) =>
+    `上游 PRD：\n${json(i.requirement)}\n\n上游产品原型（页面清单与交互，pageTree 请与之对齐；已省略 HTML 实现）：\n${json(prototypeForDesign(i.prototype))}`,
   summarize: (design) => {
     const warnings: string[] = [];
     if (design.pageTree.length > 8) warnings.push(`页面 ${design.pageTree.length} 个，超过 MVP 上限 8`);
@@ -96,7 +97,7 @@ export const DESIGN_SPEC: AgentSpec<{ prd: unknown; prototype: unknown }, Design
   },
 };
 
-export const CODEGEN_SPEC: AgentSpec<{ design: unknown; prototype: unknown }, CodegenDocument, CodegenSummary> = {
+export const CODEGEN_SPEC: AgentSpec<CodegenDocument, CodegenSummary> = {
   stage: 'codegen',
   label: 'generateCodegen',
   system: CODEGEN_SYSTEM_PROMPT,
@@ -104,8 +105,8 @@ export const CODEGEN_SPEC: AgentSpec<{ design: unknown; prototype: unknown }, Co
   jsonSchema: CODEGEN_JSON_SCHEMA,
   jsonSchemaName: 'CodegenDocument',
   maxTokens: 8192,
-  buildUser: ({ design, prototype }) =>
-    `上游 DesignDocument：\n${json(design)}\n\n上游产品原型精简版（页面布局与交互，UI 代码请与之对齐）：\n${renderPrototypeForCodegen(prototype)}`,
+  buildUser: (i) =>
+    `上游 DesignDocument：\n${json(i.design)}\n\n上游产品原型精简版（页面布局与交互，UI 代码请与之对齐）：\n${renderPrototypeForCodegen(i.prototype)}`,
   summarize: (codegen) => {
     const warnings: string[] = [];
     if (codegen.files.length === 0) warnings.push('文件列表为空');
@@ -115,7 +116,7 @@ export const CODEGEN_SPEC: AgentSpec<{ design: unknown; prototype: unknown }, Co
   },
 };
 
-export const DEPLOY_SPEC: AgentSpec<unknown, DeployDocument, DeploySummary> = {
+export const DEPLOY_SPEC: AgentSpec<DeployDocument, DeploySummary> = {
   stage: 'deploy',
   label: 'generateDeploy',
   system: DEPLOYER_SYSTEM_PROMPT,
@@ -123,7 +124,7 @@ export const DEPLOY_SPEC: AgentSpec<unknown, DeployDocument, DeploySummary> = {
   jsonSchema: DEPLOY_JSON_SCHEMA,
   jsonSchemaName: 'DeployDocument',
   maxTokens: 4096,
-  buildUser: (codegen) => `上游 CodegenDocument：\n${json(codegen)}`,
+  buildUser: (i) => `上游 CodegenDocument：\n${json(i.codegen)}`,
   summarize: (deploy) => {
     const warnings: string[] = [];
     if (deploy.status === 'failed') warnings.push('部署状态为 failed，请检查构建日志');
@@ -131,4 +132,13 @@ export const DEPLOY_SPEC: AgentSpec<unknown, DeployDocument, DeploySummary> = {
     if (deploy.target === 'git' && !deploy.repoUrl) warnings.push('Git 导出目标但仓库链接为空');
     return { target: deploy.target, url: deploy.url, status: deploy.status, warnings };
   },
+};
+
+/** 阶段 → 声明。图里加了阶段，这里必须有对应的声明（由测试保证） */
+export const AGENT_SPECS: Record<StageId, AgentSpec<unknown, { warnings: string[] }>> = {
+  requirement: REQUIREMENT_SPEC,
+  prototype: PROTOTYPE_SPEC,
+  design: DESIGN_SPEC,
+  codegen: CODEGEN_SPEC,
+  deploy: DEPLOY_SPEC,
 };

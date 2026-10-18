@@ -4,9 +4,10 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { ErrorClass, LlmLogEntry } from '@apploom/llm';
-import type { CodegenDocument, DeployDocument, DesignDocument, PRD, PrototypeDocument } from '@apploom/shared';
-import { runAgent, type AgentCtx, type AgentResult, type ChatFn } from '../agent/agent-runner';
+import { INPUT, type CodegenDocument, type DeployDocument, type DesignDocument, type PRD, type PrototypeDocument, type StageId } from '@apploom/shared';
+import { runAgent, type AgentCtx, type AgentResult, type ChatFn, type UpstreamInputs } from '../agent/agent-runner';
 import {
+  AGENT_SPECS,
   CODEGEN_SPEC,
   DEPLOY_SPEC,
   DESIGN_SPEC,
@@ -48,19 +49,29 @@ export class LlmService {
     return { onToken, onLog, repair, chatFn: this.chatFn };
   }
 
+  /**
+   * 通用入口（流水线用）：按阶段 id 取声明，输入是 STAGE_GRAPH 入边对应的上游产出。
+   * 加阶段不需要在这里加方法——图里加一项、AGENT_SPECS 里加一份声明即可。
+   */
+  run(stage: StageId, inputs: UpstreamInputs, ctx: Omit<AgentCtx, 'chatFn'>): Promise<AgentResult<unknown, { warnings: string[] }>> {
+    return runAgent(AGENT_SPECS[stage], inputs, { ...ctx, chatFn: this.chatFn });
+  }
+
+  // 以下 generateXxx 只给调试接口（/prd/*）用，返回形状按阶段保持原样
+
   /** 需求分析：一句话需求 → 结构化 PRD */
   async generatePrd(requirement: string, onToken: (token: string) => void, repair?: RepairContext, onLog?: (entry: LlmLogEntry) => void): Promise<PrdResult> {
-    return shape('prd', await runAgent(REQUIREMENT_SPEC, requirement, this.ctx(onToken, repair, onLog)));
+    return shape('prd', await runAgent(REQUIREMENT_SPEC, { [INPUT]: requirement }, this.ctx(onToken, repair, onLog)));
   }
 
   /** 产品原型：上游 PRD → 可预览的单文件 HTML 原型 */
   async generatePrototype(prd: unknown, onToken: (token: string) => void, repair?: RepairContext, onLog?: (entry: LlmLogEntry) => void): Promise<PrototypeResult> {
-    return shape('prototype', await runAgent(PROTOTYPE_SPEC, prd, this.ctx(onToken, repair, onLog)));
+    return shape('prototype', await runAgent(PROTOTYPE_SPEC, { requirement: prd }, this.ctx(onToken, repair, onLog)));
   }
 
   /** 架构设计：PRD + 原型 → 技术方案（技术栈由本 Agent 决策，全局基座不预设） */
   async generateDesign(prd: unknown, prototype: unknown, onToken: (token: string) => void, repair?: RepairContext, onLog?: (entry: LlmLogEntry) => void): Promise<DesignResult> {
-    return shape('design', await runAgent(DESIGN_SPEC, { prd, prototype }, this.ctx(onToken, repair, onLog)));
+    return shape('design', await runAgent(DESIGN_SPEC, { requirement: prd, prototype }, this.ctx(onToken, repair, onLog)));
   }
 
   /** 代码生成：方案 + 原型精简版 → 多文件代码 */
@@ -70,6 +81,6 @@ export class LlmService {
 
   /** 部署发布：代码 → 部署方案（决策 target，真正执行由 deploy 模块负责） */
   async generateDeploy(codegen: unknown, onToken: (token: string) => void, repair?: RepairContext, onLog?: (entry: LlmLogEntry) => void): Promise<DeployResult> {
-    return shape('deploy', await runAgent(DEPLOY_SPEC, codegen, this.ctx(onToken, repair, onLog)));
+    return shape('deploy', await runAgent(DEPLOY_SPEC, { codegen }, this.ctx(onToken, repair, onLog)));
   }
 }

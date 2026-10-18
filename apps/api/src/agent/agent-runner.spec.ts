@@ -24,7 +24,7 @@ describe('runAgent：基本路径', () => {
   it('成功：解析、摘要，并把 prompt / 温度（取自 STAGE_GRAPH）/ schema / 流式参数交给模型', async () => {
     const chat = scriptedChat([{ content: JSON.stringify(PRD) }]);
     const c = ctx(chat);
-    const r = await runAgent(REQUIREMENT_SPEC, '做个计数器', c);
+    const r = await runAgent(REQUIREMENT_SPEC, { '@input': '做个计数器' }, c);
 
     expect(r.error).toBeUndefined();
     expect(r.doc).toEqual(PRD);
@@ -58,7 +58,7 @@ describe('runAgent：基本路径', () => {
 
   it('上游怎么渲染进 prompt 由各阶段声明：design 拿到的是去掉 html 的原型', async () => {
     const chat = scriptedChat([{ content: '{}' }]);
-    await runAgent(DESIGN_SPEC, { prd: PRD, prototype: PROTO }, ctx(chat));
+    await runAgent(DESIGN_SPEC, { requirement: PRD, prototype: PROTO }, ctx(chat));
     expect(chat.calls[0].user).toContain('上游 PRD');
     expect(chat.calls[0].user).not.toContain('x'.repeat(200));
   });
@@ -67,7 +67,7 @@ describe('runAgent：基本路径', () => {
 describe('runAgent：解析失败的处理', () => {
   it('JSON 合法但不符合 schema：报 Zod 原因，不做本地修复也不重问', async () => {
     const chat = scriptedChat([{ content: JSON.stringify({ ...PRD, features: 'oops' }) }]);
-    const r = await runAgent(REQUIREMENT_SPEC, 'x', ctx(chat));
+    const r = await runAgent(REQUIREMENT_SPEC, { '@input': 'x' }, ctx(chat));
     expect(r.doc).toBeUndefined();
     expect(r.error).toContain('features');
     expect(r.errorClass).toBeUndefined();
@@ -76,23 +76,34 @@ describe('runAgent：解析失败的处理', () => {
 
   it('finish_reason=length：归为 truncated，且不重问（重问只会再被截断）', async () => {
     const chat = scriptedChat([{ content: '{"appName":"A","html":"<div', finishReason: 'length' }]);
-    const r = await runAgent(PROTOTYPE_SPEC, PRD, ctx(chat));
+    const r = await runAgent(PROTOTYPE_SPEC, { requirement: PRD }, ctx(chat));
     expect(r.errorClass).toBe('truncated');
     expect(chat.calls).toHaveLength(1);
   });
 
   it('模型正常结束（stop）却输出垃圾：不冒充截断', async () => {
     const chat = scriptedChat([{ content: 'garbage', finishReason: 'stop' }]);
-    const r = await runAgent(DESIGN_SPEC, { prd: PRD, prototype: PROTO }, ctx(chat));
+    const r = await runAgent(DESIGN_SPEC, { requirement: PRD, prototype: PROTO }, ctx(chat));
     expect(r.errorClass).toBeUndefined();
     expect(r.error).not.toContain('截断');
+  });
+
+  it('空响应（0 字符且无结束原因）：如实说明是空内容，不冒充 max_tokens 截断；仍归 invalid_output 以便自动重试', async () => {
+    const chat = scriptedChat([{ content: '', finishReason: undefined }]);
+    // scriptedChat 默认补 stop，这里要模拟「根本没有 finish_reason」
+    const noFinish = (async (...a: Parameters<typeof chat>) => ({ ...(await chat(...a)), finishReason: undefined })) as typeof chat;
+    noFinish.calls = chat.calls;
+    const r = await runAgent(DESIGN_SPEC, { requirement: PRD, prototype: PROTO }, ctx(noFinish));
+    expect(r.error).toContain('空内容');
+    expect(r.error).not.toContain('max_tokens');
+    expect(r.errorClass).toBeUndefined();
   });
 
   it('所有阶段都能本地修复反斜杠非法转义（不只是原型）：raw 换成修复后的 JSON，并带告警', async () => {
     const bad = JSON.stringify(PRD).replace('"计数器"', '"计数\\.器"'); // 注入非法转义 \.
     expect(() => JSON.parse(bad)).toThrow();
     const chat = scriptedChat([{ content: bad }]);
-    const r = await runAgent(REQUIREMENT_SPEC, 'x', ctx(chat));
+    const r = await runAgent(REQUIREMENT_SPEC, { '@input': 'x' }, ctx(chat));
     expect(r.error).toBeUndefined();
     expect(r.doc?.overview).toBe('计数\\.器');
     expect(r.summary?.warnings[0]).toContain('本地 JSON 修复');
@@ -106,7 +117,7 @@ describe('runAgent：原型阶段的「带错误反馈重问一次」', () => {
 
   it('首次解析失败 → 重问一次成功：label 带 -retry，prompt 含反馈与上次原文，上限固定 8192', async () => {
     const chat = scriptedChat([garbage, { content: JSON.stringify(PROTO) }]);
-    const r = await runAgent(PROTOTYPE_SPEC, PRD, ctx(chat));
+    const r = await runAgent(PROTOTYPE_SPEC, { requirement: PRD }, ctx(chat));
     expect(r.error).toBeUndefined();
     expect(r.summary?.warnings[0]).toBe('已通过 LLM 重新生成成功（上次 JSON 解析失败）');
     expect(chat.calls.map((c) => c.label)).toEqual(['generatePrototype', 'generatePrototype-retry']);
@@ -118,14 +129,14 @@ describe('runAgent：原型阶段的「带错误反馈重问一次」', () => {
   it('重问的输出带非法转义：本地修复兜底，告警说明两层都用上了', async () => {
     const bad = JSON.stringify(PROTO).replace('"简约"', '"简\\!约"');
     const chat = scriptedChat([garbage, { content: bad }]);
-    const r = await runAgent(PROTOTYPE_SPEC, PRD, ctx(chat));
+    const r = await runAgent(PROTOTYPE_SPEC, { requirement: PRD }, ctx(chat));
     expect(r.error).toBeUndefined();
     expect(r.summary?.warnings[0]).toBe('已通过 LLM 重新生成 + 本地 JSON 修复恢复');
   });
 
   it('重问仍失败：报「重试后仍失败」，raw 保留首次原文', async () => {
     const chat = scriptedChat([garbage]);
-    const r = await runAgent(PROTOTYPE_SPEC, PRD, ctx(chat));
+    const r = await runAgent(PROTOTYPE_SPEC, { requirement: PRD }, ctx(chat));
     expect(chat.calls).toHaveLength(2);
     expect(r.error).toContain('JSON 解析失败（重试后仍失败）');
     expect(r.raw).toBe('这不是 JSON');
@@ -133,13 +144,13 @@ describe('runAgent：原型阶段的「带错误反馈重问一次」', () => {
 
   it('重问本身被截断：保留 truncated 类别，流水线才能据此放大上限', async () => {
     const chat = scriptedChat([garbage, { content: '{"appName":"A","html":"<div', finishReason: 'length' }]);
-    const r = await runAgent(PROTOTYPE_SPEC, PRD, ctx(chat));
+    const r = await runAgent(PROTOTYPE_SPEC, { requirement: PRD }, ctx(chat));
     expect(r.errorClass).toBe('truncated');
   });
 
   it('已经处在修复 / 重试之中（带 repair）就不再重问，避免套娃', async () => {
     const chat = scriptedChat([garbage]);
-    const r = await runAgent(PROTOTYPE_SPEC, PRD, ctx(chat, { repair: { feedback: '改改' } }));
+    const r = await runAgent(PROTOTYPE_SPEC, { requirement: PRD }, ctx(chat, { repair: { feedback: '改改' } }));
     expect(chat.calls).toHaveLength(1);
     expect(r.error).toContain('JSON 解析失败（原始错误');
   });

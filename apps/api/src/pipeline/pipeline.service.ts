@@ -22,14 +22,15 @@ import { randomUUID } from 'node:crypto';
 import { LlmService } from '../prd/llm.service';
 import type { RepairContext } from '../agent/repair';
 import { LocalDeployService } from '../deploy/local-deploy.service';
-import { CodegenGateService, formatFailures, gateMaxRepairs, gateMode } from '../gate/codegen-gate';
+import { CodegenGateService } from '../gate/codegen-gate';
 import { TraceStore, summarizeUsage } from '../trace/trace.store';
 import { assertWithinBudget, pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
-import { saveArtifact } from '../artifacts/artifact';
 import { classifyError } from '@apploom/llm';
-import { STAGE_LABEL, downstreamOf, nextStageOf, stageNode, upstreamOf } from '@apploom/shared';
+import { nextStageOf, stageNode } from '@apploom/shared';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
+import { createStageRunner, type StageRunContext, type StageRunResult } from './stage-handlers';
+import { applyConfirm, applyHandoff, applyRepair, applyRetry, applyStageFailure, applyStageStart, applyStageSuccess, type HandoffKind, type StageFailureInfo } from './transitions';
 import {
   PIPELINE_STAGES,
   AttemptRecord,
@@ -52,26 +53,9 @@ interface PipelineJobData {
   stage: PipelineStage;
 }
 
-interface StageRunResult {
-  raw: string;
-  result?: unknown;
-  summary?: unknown;
-  error?: string;
-  /** error 的类别；缺省按 invalid_output（模型输出未通过解析/契约校验）处理 */
-  errorClass?: ErrorClass;
-  llmLogs?: LlmLogEntry[];
-}
-
-interface StageFailure {
-  message: string;
-  errorClass: ErrorClass;
-  /** 失败时仍保留 result/raw（如 deploy 已执行但失败，需保留日志供诊断） */
-  keepResult?: boolean;
-}
-
 interface StageOutcome {
   result?: StageRunResult;
-  failure?: StageFailure;
+  failure?: StageFailureInfo;
   logs: LlmLogEntry[];
 }
 
@@ -87,6 +71,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   private queue: Queue;
   private worker: Worker;
   private connection: Redis;
+  /** 执行单个阶段：检查上游 → 交给该阶段的处理器（见 stage-handlers.ts） */
+  private readonly runStage: (ctx: StageRunContext) => Promise<StageRunResult>;
 
   constructor(
     private readonly store: PipelineStore,
@@ -96,6 +82,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     private readonly gate: CodegenGateService,
     private readonly trace: TraceStore,
   ) {
+    this.runStage = createStageRunner({ agents: llm, gate, deploy: deploySvc });
     this.connection = new Redis({
       host: process.env.REDIS_HOST ?? 'localhost',
       port: Number(process.env.REDIS_PORT ?? 6379),
@@ -162,22 +149,9 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
    */
   async confirm(id: string, stage: PipelineStage): Promise<boolean> {
     const r = await this.store.mutate(id, (d, skip) => {
-      const next = this.nextStage(stage);
-      if (d.status !== 'waiting_confirm' || d.currentStage !== stage || !next) {
-        skip();
-        return null;
-      }
-      // 异常链路兜底：若当前阶段之后全部已完成（如重试产生的手工状态），直接收尾为 completed
-      const stageIdx = PIPELINE_STAGES.indexOf(stage);
-      const allAfterDone = PIPELINE_STAGES.every((s, i) => i <= stageIdx || d.stages[s].status === 'done');
-      if (allAfterDone) {
-        d.status = 'completed';
-        d.currentStage = null;
-        return { kind: 'completed' as const };
-      }
-      d.status = 'running';
-      d.currentStage = next;
-      return { kind: 'advance' as const, next };
+      const outcome = applyConfirm(d, stage);
+      if (!outcome) skip();
+      return outcome;
     });
     const outcome = r?.result;
     if (!r || !outcome) return false;
@@ -202,22 +176,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   /** 失败重试：把 failed 阶段重置为 pending 重新入队，其余已产出保留 */
   async retry(id: string, stage?: PipelineStage): Promise<boolean> {
     const r = await this.store.mutate(id, (d, skip) => {
-      // 允许重试「failed」阶段；崩溃残留的「running」阶段（BullMQ 已标 failed）也可重试
-      const target =
-        stage ??
-        PIPELINE_STAGES.find((s) => d.stages[s].status === 'failed' || d.stages[s].status === 'running');
-      if (!target || (d.status !== 'failed' && d.status !== 'running')) {
-        skip();
-        return null;
-      }
-      const st = d.stages[target];
-      st.status = 'pending';
-      st.error = undefined;
-      st.result = undefined;
-      st.raw = undefined;
-      d.handoffs[target] = false;
-      d.status = 'running';
-      d.currentStage = target;
+      const target = applyRetry(d, stage);
+      if (!target) skip();
       return target;
     });
     const target = r?.result;
@@ -238,47 +198,9 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
    */
   async repair(id: string, stage: PipelineStage, feedback?: string): Promise<boolean> {
     const r = await this.store.mutate(id, (d, skip) => {
-      const st = d.stages[stage];
-      if (!st) {
-        skip();
-        return false;
-      }
-      // feedback 省略 → 自动修复（用上次 error 兜底）；显式传（可为空串）→ 手动重跑
-      const isAuto = feedback === undefined;
-      const effectiveFeedback = isAuto ? st.error : (feedback ?? '').trim();
-      // 自动修复必须有 error 才能修；手动重跑允许空反馈（无反馈重新生成）
-      if (isAuto && !effectiveFeedback) {
-        skip();
-        return false;
-      }
-
-      // 归档上次产出（成功产出或失败 error），供 LLM 参考
-      if (!st.history) st.history = [];
-      st.history.push({ result: st.result, error: st.error });
-      // 有反馈才保存；空反馈 = 无反馈重跑（buildRepair 因空串返回 undefined）
-      if (effectiveFeedback) st.feedback = effectiveFeedback;
-      else delete st.feedback;
-      // 重置本阶段，清掉旧产出
-      st.status = 'pending';
-      st.result = undefined;
-      st.raw = undefined;
-      st.error = undefined;
-      st.summary = undefined;
-      d.handoffs[stage] = false;
-      // 下游阶段要重新跑（上游变了，下游产出作废）
-      for (const s of downstreamOf(stage)) {
-        if (d.stages[s].status === 'done' || d.stages[s].status === 'failed') {
-          d.stages[s].status = 'pending';
-          d.stages[s].result = undefined;
-          d.stages[s].raw = undefined;
-          d.stages[s].error = undefined;
-          d.stages[s].summary = undefined;
-        }
-        d.handoffs[s] = false;
-      }
-      d.status = 'running';
-      d.currentStage = stage;
-      return true;
+      const ok = applyRepair(d, stage, feedback);
+      if (!ok) skip();
+      return ok;
     });
     if (!r?.result) return false;
     await this.emitSnapshot(id);
@@ -307,16 +229,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
     // —— 执行本阶段 ——
     if (!alreadyDone) {
-      const started = await this.store.mutate(docId, (d) => {
-        d.status = 'running';
-        d.currentStage = stage;
-        d.stages[stage].status = 'running';
-        d.stages[stage].error = undefined;
-        d.stages[stage].errorClass = undefined;
-        d.stages[stage].startedAt = new Date().toISOString();
-        d.stages[stage].attempts += 1;
-        return d.stages[stage].attempts;
-      });
+      const started = await this.store.mutate(docId, (d) => applyStageStart(d, stage));
       if (!started) throw new Error(`pipeline ${docId} 不存在`);
       myAttempt = started.result;
       await this.emitSnapshot(docId);
@@ -328,23 +241,9 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       if (failure) {
         // 失败也保留 LLM 日志；deploy 这类「有产出但执行失败」的阶段额外保留 result/raw 供诊断
         const written = await this.store.mutate(docId, (d, skip) => {
-          if (!this.isCurrentRun(d, stage, myAttempt)) {
-            skip();
-            return false;
-          }
-          const st = d.stages[stage];
-          d.status = 'failed';
-          st.status = 'failed';
-          st.error = failure.message;
-          st.errorClass = failure.errorClass;
-          st.llmLogs = logs;
-          st.finishedAt = new Date().toISOString();
-          if (failure.keepResult && result) {
-            st.result = result.result;
-            st.raw = result.raw;
-            st.summary = result.summary;
-          }
-          return true;
+          const ok = applyStageFailure(d, stage, myAttempt, failure, logs, result);
+          if (!ok) skip();
+          return ok;
         });
         if (!written?.result) return this.logSuperseded(docId, stage, myAttempt, '失败');
         this.logger.warn(`pipeline ${docId} 阶段 ${stage} 失败 [${failure.errorClass}]: ${failure.message.split('\n')[0]}`);
@@ -362,91 +261,39 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       }
 
       const written = await this.store.mutate(docId, (d, skip) => {
-        if (!this.isCurrentRun(d, stage, myAttempt)) {
-          skip();
-          return false;
-        }
-        const st = d.stages[stage];
-        st.status = 'done';
-        st.result = result!.result;
-        st.raw = result!.raw;
-        st.summary = result!.summary;
-        st.llmLogs = logs;
-        st.finishedAt = new Date().toISOString();
-        return true;
+        const ok = applyStageSuccess(d, stage, myAttempt, result!, logs);
+        if (!ok) skip();
+        return ok;
       });
       if (!written?.result) return this.logSuperseded(docId, stage, myAttempt, '成功');
       this.bus.emit(docId, { type: 'stage', stage, status: 'done', summary: result!.summary, result: result!.result });
     }
 
     // —— 交接：确认模式挂起 / 自动模式入队下一阶段 / 最后阶段完成 ——
-    // 同样要求本次执行仍是当前这次（done 且 attempts 未变），否则说明已被修复/重试取代，不能代它交接
-    const next = this.nextStage(stage);
-    if (doc.confirmEachStep && stageNode(stage).needsConfirmation && next) {
-      const handed = await this.store.mutate(docId, (d, skip) => {
-        if (!this.isCurrentDone(d, stage, myAttempt)) {
-          skip();
-          return false;
-        }
-        d.handoffs[stage] = true;
-        // 用户可能已确认推进（confirm 已把 currentStage 改成 next）→ 不覆盖
-        if (d.status === 'waiting_confirm' || (d.status === 'running' && d.currentStage === stage)) {
-          d.status = 'waiting_confirm';
-        }
-        return true;
-      });
-      if (!handed?.result) return this.logSuperseded(docId, stage, myAttempt, '交接');
+    // 要求本次执行仍是当前这次（done 且 attempts 未变），否则说明已被修复/重试取代，不能代它交接
+    const next = nextStageOf(stage);
+    const kind: HandoffKind = !next ? 'complete' : doc.confirmEachStep && stageNode(stage).needsConfirmation ? 'wait' : 'advance';
+    const handed = await this.store.mutate(docId, (d, skip) => {
+      const ok = applyHandoff(d, stage, myAttempt, kind);
+      if (!ok) skip();
+      return ok;
+    });
+    if (!handed?.result) return this.logSuperseded(docId, stage, myAttempt, '交接');
+
+    if (kind === 'wait') {
       this.bus.emit(docId, { type: 'stage', stage, status: 'waiting_confirm' });
       this.bus.emit(docId, { type: 'job', status: 'waiting_confirm' });
-      return;
-    }
-
-    if (next) {
-      const handed = await this.store.mutate(docId, (d, skip) => {
-        if (!this.isCurrentDone(d, stage, myAttempt)) {
-          skip();
-          return false;
-        }
-        d.handoffs[stage] = true;
-        return true;
-      });
-      if (!handed?.result) return this.logSuperseded(docId, stage, myAttempt, '交接');
-      await this.enqueueStage(docId, next);
+    } else if (kind === 'advance') {
+      await this.enqueueStage(docId, next!);
     } else {
-      // deploy 完成 → 整条流水线完成
-      const finished = await this.store.mutate(docId, (d, skip) => {
-        if (!this.isCurrentDone(d, stage, myAttempt)) {
-          skip();
-          return false;
-        }
-        d.handoffs[stage] = true;
-        d.status = 'completed';
-        d.currentStage = null;
-        return true;
-      });
-      if (!finished?.result) return this.logSuperseded(docId, stage, myAttempt, '收尾');
       this.bus.emit(docId, { type: 'job', status: 'completed' });
-      this.bus.emit(docId, { type: 'done', doc: finished.doc });
+      this.bus.emit(docId, { type: 'done', doc: handed.doc });
       this.logger.log(`pipeline ${docId} 完成`);
     }
   }
 
-  /** 该阶段仍处于「我这次执行」：正在运行且 attempts 未被后续执行改动 */
-  private isCurrentRun(d: PipelineDoc, stage: PipelineStage, attempt: number): boolean {
-    return d.stages[stage].status === 'running' && d.stages[stage].attempts === attempt;
-  }
-
-  /** 该阶段的完成态仍是「我这次执行」产出的 */
-  private isCurrentDone(d: PipelineDoc, stage: PipelineStage, attempt: number): boolean {
-    return d.stages[stage].status === 'done' && d.stages[stage].attempts === attempt;
-  }
-
   private logSuperseded(docId: string, stage: PipelineStage, attempt: number, what: string): void {
     this.logger.warn(`pipeline ${docId} 阶段 ${stage} 第 ${attempt} 次执行已被修复/重试取代，丢弃其${what}结果`);
-  }
-
-  private nextStage(stage: PipelineStage): PipelineStage | null {
-    return nextStageOf(stage);
   }
 
   private async enqueueStage(docId: string, stage: PipelineStage): Promise<void> {
@@ -482,7 +329,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       const logs: LlmLogEntry[] = [];
       const started = Date.now();
       let result: StageRunResult | undefined;
-      let failure: StageFailure | undefined;
+      let failure: StageFailureInfo | undefined;
 
       // 预算守卫：基线 = 本流水线此前所有执行的用量；每次调用模型前再叠加本次已产生的用量
       const baseline = totalTokens(await this.priorUsage(docId, doc));
@@ -490,7 +337,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
       try {
         guard();
-        result = await this.runStage(stage, doc, docId, onToken, logs, repair, guard);
+        result = await this.runStage({ docId, doc, stage, onToken, logs, repair, guard });
         if (result.error) {
           failure = { message: result.error, errorClass: result.errorClass ?? 'invalid_output' };
         } else if ((result.result as { status?: string } | undefined)?.status === 'failed') {
@@ -556,57 +403,6 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * 代码生成 + 确定性门禁：生成 → 校验 → 未通过则把结构化失败回喂模型重新生成（最多 N 轮）。
-   * enforce 模式耗尽修复轮数后阶段失败；warn 模式只把失败记入 summary.warnings。
-   */
-  private async runCodegenWithGate(
-    docId: string,
-    doc: PipelineDoc,
-    userRepair: RepairContext | undefined,
-    onToken: (token: string) => void,
-    onLog: (entry: LlmLogEntry) => void,
-    logs: LlmLogEntry[],
-    guard: () => void,
-  ): Promise<StageRunResult> {
-    const generate = (repair: typeof userRepair) =>
-      this.llm.generateCodegen(doc.stages.design.result, doc.stages.prototype.result, onToken, repair, onLog);
-
-    let r = await generate(userRepair);
-    const mode = gateMode();
-    if (mode === 'off' || r.error || !r.codegen) {
-      return { raw: r.raw, result: r.codegen, summary: r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
-    }
-
-    const maxRepairs = gateMaxRepairs();
-    for (let round = 0; ; round++) {
-      onToken(`\n[gate] 第 ${round + 1} 轮校验…\n`);
-      const report = await this.gate.verify(docId, r.codegen, (line) => onToken(`${line}\n`));
-      const gateSummary = { mode, passed: report.passed, repairRounds: round, checks: report.checks };
-
-      if (report.passed) {
-        return { raw: r.raw, result: r.codegen, summary: { ...r.summary, gate: gateSummary }, llmLogs: logs };
-      }
-
-      if (round >= maxRepairs) {
-        const failureText = formatFailures(report.failures);
-        if (mode === 'warn') {
-          const warnings = [...(r.summary?.warnings ?? []), ...report.failures.map((f) => `[gate:${f.check}] ${f.message}`)];
-          return { raw: r.raw, result: r.codegen, summary: { ...r.summary, warnings, gate: { ...gateSummary, failures: report.failures } }, llmLogs: logs };
-        }
-        return { raw: r.raw, error: `代码门禁未通过（已自动修复 ${round} 轮）：\n${failureText}`, errorClass: 'verification', llmLogs: logs };
-      }
-
-      onToken(`[gate] 未通过（${report.failures.length} 项），回喂模型修复…\n`);
-      const feedback = [userRepair?.feedback, formatFailures(report.failures)].filter(Boolean).join('\n\n');
-      guard();
-      r = await generate({ feedback, previous: r.codegen, maxTokensLevel: userRepair?.maxTokensLevel });
-      if (r.error || !r.codegen) {
-        return { raw: r.raw, error: r.error ?? '修复轮次未产出有效代码', errorClass: r.errorClass, llmLogs: logs };
-      }
-    }
-  }
-
-  /**
    * 本流水线此前已消耗的用量（预算基线）。trace 读取失败时不能当 0（预算会在故障期间失效），
    * 退化为文档里各阶段已保存的 LLM 日志用量——只含每阶段最近一次执行，是下限估计，但好过没有。
    */
@@ -616,98 +412,6 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     } catch (e) {
       this.logger.warn(`读取 trace 失败，预算基线退化为文档内已保存日志的用量（下限估计）: ${(e as Error).message}`);
       return summarizeUsage(PIPELINE_STAGES.flatMap((s) => doc.stages[s]?.llmLogs ?? []));
-    }
-  }
-
-  /** 各阶段依赖的上游产物；缺失时直接失败，不能把 undefined 拼进 prompt */
-  /** 各阶段必须已产出的上游（由 STAGE_GRAPH 的入边推导） */
-  private static readonly UPSTREAM = Object.fromEntries(
-    PIPELINE_STAGES.map((s) => [s, upstreamOf(s).map((u) => ({ stage: u, label: STAGE_LABEL[u] }))]),
-  ) as Record<PipelineStage, Array<{ stage: PipelineStage; label: string }>>;
-
-  /** 执行单个 Agent 阶段，输入取自上游阶段产出 */
-  private async runStage(
-    stage: PipelineStage,
-    doc: PipelineDoc,
-    docId: string,
-    onToken: (token: string) => void,
-    logs: LlmLogEntry[],
-    repair: RepairContext | undefined,
-    guard: () => void,
-  ): Promise<StageRunResult> {
-    const onLog = (entry: LlmLogEntry) => logs.push(entry);
-    const missing = PipelineService.UPSTREAM[stage]?.find((u) => !doc.stages[u.stage]?.result);
-    if (missing) {
-      return { raw: '', error: `上游「${missing.label}」产物缺失，无法继续（请先完成该阶段）`, errorClass: 'invalid_input', llmLogs: logs };
-    }
-    switch (stage) {
-      case 'requirement': {
-        const r = await this.llm.generatePrd(doc.requirement, onToken, repair, onLog);
-        return { raw: r.raw, result: r.prd, summary: r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
-      }
-      case 'prototype': {
-        const r = await this.llm.generatePrototype(doc.stages.requirement.result, onToken, repair, onLog);
-        // 完整 HTML 另存为文件（doc 里仍保留一份供前端预览）；写文件失败不影响阶段结果
-        const html = (r.prototype as { html?: unknown } | undefined)?.html;
-        const htmlFile = typeof html === 'string' ? await saveArtifact(docId, 'prototype.html', html).catch(() => undefined) : undefined;
-        return { raw: r.raw, result: r.prototype, summary: htmlFile && r.summary ? { ...r.summary, htmlFile } : r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
-      }
-      case 'design': {
-        const r = await this.llm.generateDesign(
-          doc.stages.requirement.result,
-          doc.stages.prototype.result,
-          onToken,
-          repair,
-          onLog,
-        );
-        return { raw: r.raw, result: r.design, summary: r.summary, error: r.error, errorClass: r.errorClass, llmLogs: logs };
-      }
-      case 'codegen':
-        return this.runCodegenWithGate(docId, doc, repair, onToken, onLog, logs, guard);
-      case 'deploy': {
-        const codegen = doc.stages.codegen.result as {
-          files: { path: string; content: string }[];
-          dependencies: string[];
-          runCommand: string;
-        } | undefined;
-        if (!codegen?.files?.length) {
-          return { raw: '', error: '上游 codegen 产物为空，无法部署', errorClass: 'invalid_input' };
-        }
-
-        // 1) LLM 决策部署方案（target: local / cloud / git），repair 反馈也走 LLM
-        const r = await this.llm.generateDeploy(codegen, onToken, repair, onLog);
-        if (r.error) return { raw: r.raw, error: r.error, errorClass: r.errorClass, llmLogs: logs };
-        const deploy = r.deploy as {
-          target: 'local' | 'cloud' | 'git';
-          url: string;
-          repoUrl: string;
-          buildLog: string;
-          status: 'success' | 'failed';
-          port?: number;
-        } | undefined;
-        if (!deploy) return { raw: r.raw, error: '部署方案解析失败', llmLogs: logs };
-
-        // 2) 只有 local 有真实执行器。cloud / git 没有 executor：不能把 LLM 编出来的 url / repoUrl 当成部署结果（假成功），
-        //    按「模型输出不合规」处理，让自动修复把约束回喂给模型重新决策
-        if (deploy.target !== 'local') {
-          return {
-            raw: r.raw,
-            error: `部署目标「${deploy.target}」当前没有执行器，只支持 local。请把 target 改为 "local" 并给出本地 dev server 端口；不要虚构 url / repoUrl。`,
-            errorClass: 'invalid_output',
-            llmLogs: logs,
-          };
-        }
-
-        // 3) local → LocalDeployService 真实执行，用真实结果覆盖 LLM 的占位值
-        const out = await this.deploySvc.deploy(docId, codegen, onToken, deploy.port);
-        const merged = { ...deploy, url: out.url, buildLog: out.buildLog, status: out.status };
-        return {
-          raw: out.buildLog,
-          result: merged,
-          summary: { target: 'local', url: out.url, status: out.status, warnings: [] },
-          llmLogs: logs,
-        };
-      }
     }
   }
 }

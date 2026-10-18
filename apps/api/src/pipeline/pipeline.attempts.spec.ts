@@ -5,6 +5,7 @@ jest.mock('ioredis', () => ({
 
 import { LlmError, type LlmLogEntry } from '@apploom/llm';
 import { PipelineService } from './pipeline.service';
+import { withRun } from './test-llm';
 import { createPipelineDoc, type AttemptRecord, type PipelineDoc, type PipelineStage } from './pipeline.types';
 
 class FakeStore {
@@ -31,7 +32,7 @@ function setup(stage: PipelineStage = 'requirement') {
   doc.currentStage = stage;
   const store = new FakeStore(doc);
   const bus = { emit: jest.fn() };
-  const llm = { generatePrd: jest.fn(), generateDeploy: jest.fn() };
+  const llm = withRun({ generatePrd: jest.fn(), generateDeploy: jest.fn() } as Record<string, jest.Mock>);
   const records: AttemptRecord[] = [];
   const trace = { append: jest.fn(async (r: AttemptRecord) => void records.push(r)), list: jest.fn(async () => records) };
   const deploySvc = { deploy: jest.fn() };

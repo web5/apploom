@@ -39,6 +39,10 @@ export function parseFailure(raw: string, finishReason: string | undefined, msg:
       errorClass: 'truncated',
     };
   }
+  // 正文完全为空且没有结束原因：服务端流提前断了 / 返回空流，不是 max_tokens 截断——别让人去调 token 上限
+  if (!raw.trim() && !finishReason) {
+    return { raw, error: `LLM 返回了空内容（没有任何输出，也没有结束原因），多为服务端偶发异常，重试通常可恢复。解析错误：${msg}` };
+  }
   // 服务端明确报了非 length 的结束原因（如 stop）= 没被截断，别按报错特征乱猜；拿不到 finish_reason 时才沿用猜测
   return { raw, error: (finishReason ? null : detectTruncation(raw, msg)) ?? msg };
 }

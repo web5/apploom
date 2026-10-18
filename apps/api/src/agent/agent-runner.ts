@@ -22,7 +22,10 @@ export interface ReaskPolicy {
   maxTokens: number;
 }
 
-export interface AgentSpec<I, TDoc, TSummary extends { warnings: string[] }> {
+/** 一个阶段消费的上游，键是 STAGE_GRAPH 入边的 from（上游阶段 id，或首阶段的 '@input'），值是该上游的产出 */
+export type UpstreamInputs = Partial<Record<string, unknown>>;
+
+export interface AgentSpec<TDoc, TSummary extends { warnings: string[] }> {
   stage: StageId;
   /** 日志 / trace 里的调用标识（前端调试面板按它展示） */
   label: string;
@@ -34,7 +37,7 @@ export interface AgentSpec<I, TDoc, TSummary extends { warnings: string[] }> {
   /** 默认输出上限；缺省 = 交给服务商默认值 */
   maxTokens?: number;
   /** 渲染 user prompt 主体（不含修复反馈，runner 负责追加） */
-  buildUser(input: I): string;
+  buildUser(inputs: UpstreamInputs): string;
   /** 产出摘要与质量告警 */
   summarize(doc: TDoc): TSummary;
   reask?: ReaskPolicy;
@@ -59,15 +62,15 @@ export interface AgentResult<TDoc, TSummary> {
 
 const LOCAL_REPAIR_WARNING = '已通过本地 JSON 修复恢复（原始输出含反斜杠非法转义，已自动修正）';
 
-export async function runAgent<I, TDoc, TSummary extends { warnings: string[] }>(
-  spec: AgentSpec<I, TDoc, TSummary>,
-  input: I,
+export async function runAgent<TDoc, TSummary extends { warnings: string[] }>(
+  spec: AgentSpec<TDoc, TSummary>,
+  inputs: UpstreamInputs,
   ctx: AgentCtx,
 ): Promise<AgentResult<TDoc, TSummary>> {
   const provider = loadProviderFromEnv();
   const chatFn = ctx.chatFn ?? (chat as ChatFn);
   const { temperature } = stageNode(spec.stage);
-  const baseUser = spec.buildUser(input);
+  const baseUser = spec.buildUser(inputs);
 
   const call = (label: string, user: string, maxTokens: number | undefined) =>
     chatFn(provider, {

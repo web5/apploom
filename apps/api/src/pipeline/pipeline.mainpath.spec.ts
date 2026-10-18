@@ -8,6 +8,7 @@ jest.mock('ioredis', () => ({
 }));
 
 import { PipelineService } from './pipeline.service';
+import { withRun } from './test-llm';
 import { createPipelineDoc, PIPELINE_STAGES, type AttemptRecord, type PipelineDoc, type PipelineEvent, type PipelineStage } from './pipeline.types';
 
 class FakeStore {
@@ -34,13 +35,13 @@ function setup(confirmEachStep: boolean) {
   const store = new FakeStore(doc);
   const events: PipelineEvent[] = [];
   const bus = { emit: jest.fn((_id: string, e: PipelineEvent) => void events.push(e)) };
-  const llm = {
+  const llm = withRun({
     generatePrd: jest.fn(async () => ({ raw: 'r', prd: OUT.requirement.prd, summary: { features: 1 } })),
     generatePrototype: jest.fn(async () => ({ raw: 'r', prototype: OUT.prototype, summary: { pages: 1 } })),
     generateDesign: jest.fn(async () => ({ raw: 'r', design: OUT.design, summary: { pages: 1 } })),
     generateCodegen: jest.fn(async () => ({ raw: 'r', codegen: OUT.codegen, summary: { files: 1 } })),
     generateDeploy: jest.fn(async () => ({ raw: 'r', deploy: { target: 'local', url: '', repoUrl: '', buildLog: '', status: 'success', port: 5173 }, summary: { warnings: [] } })),
-  };
+  });
   const deploySvc = { deploy: jest.fn(async () => ({ url: 'http://localhost:5173', buildLog: 'ok', status: 'success' })) };
   const gate = { verify: jest.fn(async () => ({ passed: true, failures: [], checks: [] })) };
   const records: AttemptRecord[] = [];
