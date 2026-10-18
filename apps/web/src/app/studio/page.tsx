@@ -1,13 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApprovalPanel, type ApprovalView } from '@/components/studio/ApprovalPanel';
+import { useEffect, useState } from 'react';
+import { ApprovalPanel } from '@/components/studio/ApprovalPanel';
 import { errorClassMeta } from '@/components/studio/errorClass';
 import { StageAttempts, TraceSummary, useTrace } from '@/components/studio/TracePanel';
+import { useRunMachine } from '@/features/run/useRunMachine';
 import { buildPreviewHtml, PREVIEW_SANDBOX } from '@/components/studio/previewHtml';
 
 import { STAGE_IDS, STAGE_LABEL, type StageId } from '@apploom/shared/graph';
-import type { CodegenDocument, DeployDocument, DesignDocument, LlmLogEntry, PipelineDoc, PipelineDocSummary, PipelineStatus, PRD, PrototypeDocument, StageStatus } from '@apploom/shared';
+import type { CodegenDocument, DeployDocument, DesignDocument, LlmLogEntry, PipelineDocSummary, PipelineStatus, PRD, PrototypeDocument, StageStatus } from '@apploom/shared';
 
 /** 阶段与展示名由 @apploom/shared 的 STAGE_GRAPH 推导；五份 Agent 产出的类型由 Zod 导出，不要在这里手抄 */
 type Stage = StageId;
@@ -18,10 +19,6 @@ type Codegen = CodegenDocument;
 type Deploy = DeployDocument;
 type Prototype = PrototypeDocument;
 const STAGES: Stage[] = [...STAGE_IDS];
-
-function emptyTokens(): Record<Stage, string> {
-  return { requirement: '', prototype: '', design: '', codegen: '', deploy: '' };
-}
 
 /** 后端 StageStatus → 前端 Status */
 function toStatus(s?: StageStatus): Status {
@@ -46,276 +43,39 @@ export default function StudioPage() {
 }
 
 function StudioPageInner() {
+  // 服务端派生的状态与所有和后端打交道的动作都在 useRunMachine；这里只留纯界面状态
+  const { state, busy, start, confirmStage, retryStage, repairStage, disconnect, loadHistory, openDoc, decideApproval } = useRunMachine();
+  const { doc, tokens, approvals, connected, error } = state;
   const [requirement, setRequirement] = useState('做一个团队待办事项应用，支持任务指派和看板');
   const [confirmMode, setConfirmMode] = useState(true);
-  const [doc, setDoc] = useState<PipelineDoc | null>(null);
-  const [tokens, setTokens] = useState<Record<Stage, string>>(emptyTokens());
-  const [busy, setBusy] = useState<Record<Stage, boolean>>({ requirement: false, prototype: false, design: false, codegen: false, deploy: false });
   const [repairOpen, setRepairOpen] = useState<Stage | null>(null);
   const [repairText, setRepairText] = useState('');
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState('');
   const [history, setHistory] = useState<PipelineDocSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [logOpen, setLogOpen] = useState<Stage | null>(null);
   const [traceOpen, setTraceOpen] = useState<Stage | null>(null);
-  const [approvals, setApprovals] = useState<ApprovalView[]>([]);
-  const esRef = useRef<EventSource | null>(null);
-  const docIdRef = useRef<string | null>(null);
 
-  /** 拉取当前待审批项（页面刷新 / SSE 重连后 approval 事件不会重放，以接口为准） */
-  const refreshApprovals = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/pipeline/${id}/approvals`);
-      if (!res.ok || docIdRef.current !== id) return;
-      const { items } = (await res.json()) as { items: ApprovalView[] };
-      setApprovals(items);
-    } catch { /* 静默：下次 snapshot / approval 事件会再同步 */ }
-  }, []);
-
-  /** 人工决策：404 表示已超时或已被处理，直接从列表移除 */
-  const decideApproval = useCallback(async (a: ApprovalView, decision: 'approve' | 'reject') => {
-    try {
-      const res = await fetch(`/api/pipeline/${a.docId}/approvals/${a.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision }),
-      });
-      if (!res.ok && res.status !== 404) setError(await res.text());
-    } catch (e) {
-      setError((e as Error).message);
-    }
-    setApprovals((prev) => prev.filter((x) => x.id !== a.id));
-  }, []);
-
-  /** 订阅 SSE 进度流。后端事件见 pipeline.controller.ts */
-  const subscribe = useCallback((id: string) => {
-    esRef.current?.close();
-    const es = new EventSource(`/api/pipeline/${id}/events`);
-    esRef.current = es;
-    docIdRef.current = id;
-    sessionStorage.setItem('apploom:lastPipeline', id);
-    setError('');
-    setApprovals([]);
-    setConnected(true);
-    void refreshApprovals(id);
-
-    // 兼容连接时直接推 doc 与 { doc } 两种形态
-    const parseDoc = (e: MessageEvent): PipelineDoc => {
-      const data = JSON.parse(e.data);
-      return (data?.doc ?? data) as PipelineDoc;
-    };
-
-    es.addEventListener('snapshot', (e) => {
-      setDoc(parseDoc(e as MessageEvent));
-      void refreshApprovals(id);
-    });
-    es.addEventListener('stage', (e) => {
-      const { stage, status, summary, result, error: stageError, errorClass } = JSON.parse((e as MessageEvent).data) as {
-        stage: Stage; status: StageStatus; summary?: unknown; result?: unknown; error?: string; errorClass?: string;
-      };
-      setDoc((prev) => prev ? {
-        ...prev,
-        stages: {
-          ...prev.stages,
-          [stage]: {
-            ...prev.stages[stage],
-            status,
-            summary: summary ?? prev.stages[stage].summary,
-            result: result ?? prev.stages[stage].result,
-            // 失败时带上真实原因与类别；其它状态清掉旧的失败信息
-            error: status === 'failed' ? stageError ?? prev.stages[stage].error : undefined,
-            errorClass: status === 'failed' ? errorClass ?? prev.stages[stage].errorClass : undefined,
-          },
-        },
-      } : prev);
-    });
-    es.addEventListener('approval', (e) => {
-      const { approval } = JSON.parse((e as MessageEvent).data) as { approval: ApprovalView };
-      setApprovals((prev) => (prev.some((a) => a.id === approval.id) ? prev : [...prev, approval]));
-    });
-    es.addEventListener('approval-resolved', (e) => {
-      const { id: resolvedId } = JSON.parse((e as MessageEvent).data) as { id: string };
-      setApprovals((prev) => prev.filter((a) => a.id !== resolvedId));
-    });
-    es.addEventListener('token', (e) => {
-      const { stage, token } = JSON.parse((e as MessageEvent).data) as { stage: Stage; token: string };
-      setTokens((prev) => ({ ...prev, [stage]: prev[stage] + token }));
-    });
-    es.addEventListener('job', (e) => {
-      const { status } = JSON.parse((e as MessageEvent).data);
-      setDoc((prev) => prev ? { ...prev, status } : prev);
-    });
-    es.addEventListener('done', (e) => {
-      const { doc } = JSON.parse((e as MessageEvent).data);
-      setDoc(doc);
-      setApprovals([]);
-      setConnected(false);
-      es.close();
-    });
-    es.addEventListener('pipeline-error', (e) => {
-      const { stage, message } = JSON.parse((e as MessageEvent).data);
-      setError(`阶段「${STAGE_LABEL[stage as Stage]}」失败：${message}`);
-    });
-
-    // 原生连接错误：EventSource 会自动重连（心跳兜底），仅提示
-    es.onerror = () => setConnected(false);
-  }, [refreshApprovals]);
-
-  /** 创建异步任务并订阅进度 */
-  async function start() {
-    if (!requirement.trim()) return;
-    setDoc(null);
-    setTokens(emptyTokens());
-    setError('');
-    try {
-      const res = await fetch('/api/pipeline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requirement, confirmEachStep: confirmMode }),
-      });
-      if (!res.ok) { setError(await res.text()); return; }
-      const { id } = await res.json();
-      subscribe(id);
-    } catch (e) {
-      setError((e as Error).message);
+  /** 提交修改：成功后收起输入框 */
+  async function submitRepair(stage: Stage, feedback?: string) {
+    if (await repairStage(stage, feedback)) {
+      setRepairOpen(null);
+      setRepairText('');
     }
   }
 
-  /** 逐步确认：放行下一阶段 */
-  async function confirmStage(stage: Stage) {
-    const id = docIdRef.current;
-    if (!id) return;
-    setBusy((prev) => ({ ...prev, [stage]: true }));
-    try {
-      const res = await fetch(`/api/pipeline/${id}/confirm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage }),
-      });
-      if (!res.ok) setError(await res.text());
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy((prev) => ({ ...prev, [stage]: false }));
-    }
-  }
-
-  /** 失败重试：不传 stage 则重试失败的阶段 */
-  async function retryStage(stage?: Stage) {
-    const id = docIdRef.current;
-    if (!id) return;
-    const target = stage ?? STAGES.find((s) => doc?.stages[s].status === 'failed');
-    if (!target) return;
-    setBusy((prev) => ({ ...prev, [target]: true }));
-    try {
-      const res = await fetch(`/api/pipeline/${id}/retry`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: target }),
-      });
-      if (!res.ok) setError(await res.text());
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy((prev) => ({ ...prev, [target]: false }));
-    }
-  }
-
-  /** AI 修复/修改：带反馈重新生成。feedback 省略则自动用 error（自动修复） */
-  async function repairStage(stage: Stage, feedback?: string) {
-    const id = docIdRef.current;
-    if (!id) return;
-    setBusy((prev) => ({ ...prev, [stage]: true }));
-    try {
-      const res = await fetch(`/api/pipeline/${id}/repair`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage, feedback: feedback?.trim() }),
-      });
-      if (!res.ok) setError(await res.text());
-      else {
-        setRepairOpen(null);
-        setRepairText('');
-        // completed 任务修改后 SSE 已关闭（done 事件里 es.close），重新订阅以接收后续进度
-        subscribe(id);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy((prev) => ({ ...prev, [stage]: false }));
-    }
-  }
-
-  /** 断开订阅（任务仍在后台执行，仅停止实时跟踪） */
-  function disconnect() {
-    esRef.current?.close();
-    esRef.current = null;
-    docIdRef.current = null;
-    sessionStorage.removeItem('apploom:lastPipeline');
-    setDoc(null);
-    setTokens(emptyTokens());
-    setConnected(false);
-    setError('已断开实时连接，任务仍在后台执行。');
-  }
-
-  /** 加载历史项目列表 */
-  async function loadHistory() {
-    try {
-      const res = await fetch('/api/pipeline');
-      if (!res.ok) { setError(await res.text()); return; }
-      const { items } = await res.json();
-      setHistory(items as PipelineDocSummary[]);
+  /** 打开历史项目面板 */
+  async function openHistoryPanel() {
+    const items = await loadHistory();
+    if (items) {
+      setHistory(items);
       setShowHistory(true);
-    } catch (e) {
-      setError((e as Error).message);
     }
   }
 
-  /** 打开历史项目：加载完整 doc；未完成则重新订阅，已完成仅展示 */
-  function openHistory(id: string) {
-    esRef.current?.close();
-    (async () => {
-      try {
-        const res = await fetch(`/api/pipeline/${id}`);
-        if (!res.ok) { setError(await res.text()); return; }
-        const d = (await res.json()) as PipelineDoc;
-        setDoc(d);
-        setTokens(emptyTokens());
-        setShowHistory(false);
-        docIdRef.current = id;
-        sessionStorage.setItem('apploom:lastPipeline', id);
-        if (d.status === 'completed' || d.status === 'failed') {
-          setConnected(false);
-        } else {
-          subscribe(id);
-        }
-      } catch (e) {
-        setError((e as Error).message);
-      }
-    })();
+  /** 选中某个历史项目 */
+  async function openHistory(id: string) {
+    if (await openDoc(id)) setShowHistory(false);
   }
-
-  // 挂载时恢复上次未完成的任务（页面刷新后能续上）
-  useEffect(() => {
-    const id = sessionStorage.getItem('apploom:lastPipeline');
-    if (!id) return;
-    (async () => {
-      try {
-        const res = await fetch(`/api/pipeline/${id}`);
-        if (!res.ok) { sessionStorage.removeItem('apploom:lastPipeline'); return; }
-        const d = (await res.json()) as PipelineDoc;
-        if (d.status === 'completed') {
-          setDoc(d);
-          sessionStorage.removeItem('apploom:lastPipeline');
-        } else {
-          setDoc(d);
-          subscribe(id);
-        }
-      } catch { /* 后端没起来时静默跳过 */ }
-    })();
-    return () => esRef.current?.close();
-  }, [subscribe]);
 
   // 阶段状态变化（含自动修复后的新 Attempt）即重拉执行记录；运行中再 4s 兜底刷新
   const traceKey = doc ? `${doc.status}|${STAGES.map((s) => `${doc.stages[s].status}:${doc.stages[s].attempts}`).join(',')}` : '';
@@ -352,7 +112,7 @@ function StudioPageInner() {
         autoFocus
       />
       <div className="row">
-        <button className="btn btn-primary" onClick={() => repairStage(stage, repairText)} disabled={busy[stage]}>
+        <button className="btn btn-primary" onClick={() => submitRepair(stage, repairText)} disabled={busy[stage]}>
           {busy[stage] ? '提交中…' : (repairText.trim() ? '提交修改' : '直接重新生成')}
         </button>
         <button className="btn btn-ghost" onClick={() => { setRepairOpen(null); setRepairText(''); }}>取消</button>
@@ -368,7 +128,7 @@ function StudioPageInner() {
           生产端 · 异步 5-Agent 流水线（BullMQ + SSE）
           {connected && <span style={{ color: '#10b981', marginLeft: 6 }}>● 实时连接</span>}
         </span>
-        <button className="btn btn-ghost" onClick={loadHistory}>📚 历史项目</button>
+        <button className="btn btn-ghost" onClick={openHistoryPanel}>📚 历史项目</button>
       </header>
 
       <ApprovalPanel approvals={approvals} onDecide={decideApproval} />
@@ -456,7 +216,7 @@ function StudioPageInner() {
               disabled={!canStart}
             />
             <div className="row">
-              <button className="btn btn-primary" onClick={start} disabled={!canStart || !requirement.trim()}>
+              <button className="btn btn-primary" onClick={() => start(requirement, confirmMode)} disabled={!canStart || !requirement.trim()}>
                 {doc && isCompleted ? '重新生成' : '生成 PRD →'}
               </button>
               <label className="confirm-toggle">
