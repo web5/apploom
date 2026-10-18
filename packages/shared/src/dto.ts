@@ -117,6 +117,8 @@ export interface StageState {
 /** 流水线文档 —— 存 Redis，是任务状态的唯一事实来源 */
 export interface PipelineDoc {
   id: string;
+  /** 创建者（API Key 名）；未启用认证或升级前的老数据没有此字段，视为公共 */
+  ownerId?: string;
   /** 乐观锁版本：每次成功写入 +1（由存储层维护，业务代码不要手改） */
   version: number;
   requirement: string;
@@ -136,6 +138,7 @@ export interface PipelineDoc {
 /** 历史项目列表摘要（不含大字段 result/raw/history） */
 export interface PipelineDocSummary {
   id: string;
+  ownerId?: string;
   requirement: string;
   status: PipelineStatus;
   currentStage: StageId | null;

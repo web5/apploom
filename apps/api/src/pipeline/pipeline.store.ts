@@ -25,6 +25,7 @@ export type SkipWrite = () => void;
 export function toSummary(d: PipelineDoc): PipelineDocSummary {
   return {
     id: d.id,
+    ownerId: d.ownerId,
     requirement: d.requirement,
     status: d.status,
     currentStage: d.currentStage,
@@ -56,8 +57,8 @@ export abstract class PipelineStore {
    */
   abstract mutate<T>(id: string, mutator: (doc: PipelineDoc, skip: SkipWrite) => T, maxRetries?: number): Promise<{ doc: PipelineDoc; result: T } | null>;
   abstract remove(id: string): Promise<void>;
-  /** 历史项目摘要，按最后更新时间倒序 */
-  abstract list(): Promise<PipelineDocSummary[]>;
+  /** 历史项目摘要，按最后更新时间倒序。传 ownerId 时只返回该用户的（以及没有归属的老数据） */
+  abstract list(ownerId?: string): Promise<PipelineDocSummary[]>;
 
   /** 无返回值的原子修改 */
   async update(id: string, mutator: (doc: PipelineDoc) => void): Promise<PipelineDoc | null> {

@@ -155,6 +155,20 @@ describe('RedisPipelineStore（真实 Redis）', () => {
     expect(await raw.exists(`pipeline:summary:${d2.id}`)).toBe(0);
   });
 
+  it_('按归属过滤列表：只看到自己的和没有归属的老数据；ownerId 随文档持久化', async () => {
+    const mine = newDoc('我的'); mine.ownerId = 'alice';
+    const theirs = newDoc('别人的'); theirs.ownerId = 'bob';
+    const legacy = newDoc('老数据');
+    await save(mine); await save(theirs); await save(legacy);
+    const seen = (await a.list('alice')).map((s) => s.id);
+    expect(seen).toEqual(expect.arrayContaining([mine.id, legacy.id]));
+    expect(seen).not.toContain(theirs.id);
+    expect((await a.list()).map((s) => s.id)).toEqual(expect.arrayContaining([mine.id, theirs.id, legacy.id]));
+    expect((await a.get(mine.id))!.ownerId).toBe('alice');
+    expect((await a.mutate(mine.id, (d) => { d.status = 'running'; }))!.doc.ownerId).toBe('alice');
+    expect((await a.list('alice')).find((s) => s.id === mine.id)!.ownerId).toBe('alice');
+  });
+
   it_('老数据：缺 version / 带 pendingConfirms 的文档可读、可继续写，并能被 ensureIndex 补进列表', async () => {
     const id = `store-test-old-${randomUUID()}`;
     created.push(id);

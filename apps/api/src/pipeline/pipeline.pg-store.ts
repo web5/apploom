@@ -33,10 +33,10 @@ export class PgPipelineStore extends PipelineStore implements OnModuleDestroy {
     const summary = toJsonb(toSummary(doc));
     const updatedAt = new Date(doc.updatedAt);
     await this.prisma.$executeRaw`
-      INSERT INTO "PipelineRun" ("id", "requirement", "status", "currentStage", "version", "doc", "summary", "createdAt", "updatedAt")
-      VALUES (${doc.id}, ${cleanText(doc.requirement)}, ${doc.status}, ${doc.currentStage}, ${doc.version ?? 0}, ${json}::jsonb, ${summary}::jsonb, ${new Date(doc.createdAt)}, ${updatedAt})
+      INSERT INTO "PipelineRun" ("id", "ownerId", "requirement", "status", "currentStage", "version", "doc", "summary", "createdAt", "updatedAt")
+      VALUES (${doc.id}, ${doc.ownerId ?? null}, ${cleanText(doc.requirement)}, ${doc.status}, ${doc.currentStage}, ${doc.version ?? 0}, ${json}::jsonb, ${summary}::jsonb, ${new Date(doc.createdAt)}, ${updatedAt})
       ON CONFLICT ("id") DO UPDATE SET
-        "requirement" = EXCLUDED."requirement", "status" = EXCLUDED."status", "currentStage" = EXCLUDED."currentStage",
+        "ownerId" = EXCLUDED."ownerId", "requirement" = EXCLUDED."requirement", "status" = EXCLUDED."status", "currentStage" = EXCLUDED."currentStage",
         "version" = EXCLUDED."version", "doc" = EXCLUDED."doc", "summary" = EXCLUDED."summary", "updatedAt" = EXCLUDED."updatedAt"`;
   }
 
@@ -73,7 +73,7 @@ export class PgPipelineStore extends PipelineStore implements OnModuleDestroy {
         doc.version += 1;
         doc.updatedAt = new Date().toISOString();
         await tx.$executeRaw`
-          UPDATE "PipelineRun" SET "requirement" = ${cleanText(doc.requirement)}, "status" = ${doc.status}, "currentStage" = ${doc.currentStage},
+          UPDATE "PipelineRun" SET "ownerId" = ${doc.ownerId ?? null}, "requirement" = ${cleanText(doc.requirement)}, "status" = ${doc.status}, "currentStage" = ${doc.currentStage},
             "version" = ${doc.version}, "doc" = ${toJsonb(doc)}::jsonb, "summary" = ${toJsonb(toSummary(doc))}::jsonb, "updatedAt" = ${new Date(doc.updatedAt)}
           WHERE "id" = ${id}`;
         return { doc, result };
@@ -86,8 +86,12 @@ export class PgPipelineStore extends PipelineStore implements OnModuleDestroy {
     await this.prisma.pipelineRun.deleteMany({ where: { id } });
   }
 
-  async list(): Promise<PipelineDocSummary[]> {
-    const rows = await this.prisma.pipelineRun.findMany({ orderBy: { updatedAt: 'desc' }, select: { summary: true } });
+  async list(ownerId?: string): Promise<PipelineDocSummary[]> {
+    const rows = await this.prisma.pipelineRun.findMany({
+      where: ownerId ? { OR: [{ ownerId }, { ownerId: null }] } : undefined,
+      orderBy: { updatedAt: 'desc' },
+      select: { summary: true },
+    });
     return rows.map((r) => r.summary as unknown as PipelineDocSummary);
   }
 

@@ -140,6 +140,20 @@ describe('PgPipelineStore（真实 Postgres）', () => {
     expect((await a.mutate(id, (d) => { d.status = 'running'; }))!.doc.version).toBe(1);
   });
 
+  it_('按归属过滤列表：只看到自己的和没有归属的老数据；ownerId 随文档持久化', async () => {
+    const mine = newDoc('我的'); mine.ownerId = 'alice';
+    const theirs = newDoc('别人的'); theirs.ownerId = 'bob';
+    const legacy = newDoc('老数据');
+    await save(mine); await save(theirs); await save(legacy);
+    const seen = (await a.list('alice')).map((s) => s.id);
+    expect(seen).toEqual(expect.arrayContaining([mine.id, legacy.id]));
+    expect(seen).not.toContain(theirs.id);
+    expect((await a.list()).map((s) => s.id)).toEqual(expect.arrayContaining([mine.id, theirs.id, legacy.id]));
+    expect((await a.get(mine.id))!.ownerId).toBe('alice');
+    expect((await a.mutate(mine.id, (d) => { d.status = 'running'; }))!.doc.ownerId).toBe('alice');
+    expect((await a.list('alice')).find((s) => s.id === mine.id)!.ownerId).toBe('alice');
+  });
+
   it_('jsonb 不接受的字符（\\u0000、孤立代理项）写入前被清理，不会让整次写入失败', async () => {
     const doc = await save(newDoc('含\u0000怪字符\ud800'));
     const r = await a.mutate(doc.id, (d) => { d.stages.requirement.raw = 'a\u0000b\udc00c'; });

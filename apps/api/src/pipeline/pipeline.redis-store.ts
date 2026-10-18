@@ -189,7 +189,7 @@ export class RedisPipelineStore extends PipelineStore implements OnModuleInit, O
   }
 
   /** 列出历史项目摘要，按最后更新时间倒序（走 zset 索引与摘要 key，不解析整份文档） */
-  async list(): Promise<PipelineDocSummary[]> {
+  async list(ownerId?: string): Promise<PipelineDocSummary[]> {
     const ids = await this.redis.zrevrange(INDEX_KEY, 0, -1);
     if (ids.length === 0) return [];
     const raws = await this.redis.mget(...ids.map(summaryKey));
@@ -197,7 +197,8 @@ export class RedisPipelineStore extends PipelineStore implements OnModuleInit, O
     raws.forEach((raw, i) => {
       if (!raw) return;
       try {
-        out.push(JSON.parse(raw) as PipelineDocSummary);
+        const summary = JSON.parse(raw) as PipelineDocSummary;
+        if (!ownerId || !summary.ownerId || summary.ownerId === ownerId) out.push(summary);
       } catch {
         this.logger.error(`pipeline ${ids[i]} 摘要 JSON 损坏`);
       }

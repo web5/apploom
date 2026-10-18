@@ -104,9 +104,10 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 创建异步任务：写 Redis doc + 入队第一阶段，立即返回 jobId */
-  async create(requirement: string, confirmEachStep = true): Promise<string> {
+  async create(requirement: string, confirmEachStep = true, ownerId?: string): Promise<string> {
     const doc = createPipelineDoc(requirement.trim(), confirmEachStep);
     doc.id = randomUUID();
+    if (ownerId) doc.ownerId = ownerId;
     doc.currentStage = 'requirement';
     await this.store.save(doc);
     await this.enqueueStage(doc.id, 'requirement', nextSeq(doc, 'requirement'));
@@ -117,8 +118,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     return this.store.get(id);
   }
 
-  list(): Promise<PipelineDocSummary[]> {
-    return this.store.list();
+  list(ownerId?: string): Promise<PipelineDocSummary[]> {
+    return this.store.list(ownerId);
   }
 
   /** 阶段执行记录（Attempt）；brief=true 时省略体积大的 llmLogs */

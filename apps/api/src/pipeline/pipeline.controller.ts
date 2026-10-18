@@ -28,14 +28,21 @@ import {
   Query,
   Req,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { PIPELINE_STAGES, PipelineStage } from './pipeline.types';
 import { PipelineService } from './pipeline.service';
 import { ApprovalService } from '../approval/approval.service';
 import { pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
+import type { Principal } from '../security/api-keys';
+import { OwnerGuard } from '../security/owner.guard';
+import { checkQuota, quotaConfig } from '../security/ownership';
+
+type AuthedRequest = Request & { principal?: Principal };
 
 @Controller('pipeline')
+@UseGuards(OwnerGuard)
 export class PipelineController {
   constructor(
     private readonly pipeline: PipelineService,
@@ -44,8 +51,8 @@ export class PipelineController {
 
   /** 历史项目列表（摘要，按更新时间倒序） */
   @Get()
-  async list(@Res() res: Response) {
-    const items = await this.pipeline.list();
+  async list(@Req() req: AuthedRequest, @Res() res: Response) {
+    const items = await this.pipeline.list(req.principal?.name);
     res.json({ items });
   }
 
@@ -53,6 +60,7 @@ export class PipelineController {
   @Post()
   async create(
     @Body() body: { requirement?: string; confirmEachStep?: boolean },
+    @Req() req: AuthedRequest,
     @Res() res: Response,
   ) {
     const requirement = (body?.requirement ?? '').trim();
@@ -60,7 +68,15 @@ export class PipelineController {
       res.status(400).json({ message: 'requirement 不能为空' });
       return;
     }
-    const id = await this.pipeline.create(requirement, body?.confirmEachStep !== false);
+    const owner = req.principal?.name;
+    if (owner) {
+      const refused = checkQuota(await this.pipeline.list(owner), owner, quotaConfig(true));
+      if (refused) {
+        res.status(429).json({ message: refused });
+        return;
+      }
+    }
+    const id = await this.pipeline.create(requirement, body?.confirmEachStep !== false, owner);
     res.status(201).json({ id });
   }
 
