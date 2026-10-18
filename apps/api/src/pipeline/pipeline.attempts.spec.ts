@@ -168,7 +168,7 @@ describe('阶段执行：错误分类 + 自动修复 + trace', () => {
 
       expect(results.filter(Boolean)).toHaveLength(1);
       expect(queue.add).toHaveBeenCalledTimes(1);
-      expect(queue.add).toHaveBeenCalledWith('prototype', { docId: 'doc1', stage: 'prototype' });
+      expect(queue.add).toHaveBeenCalledWith('prototype', { docId: 'doc1', stage: 'prototype', seq: 1 }, { jobId: 'doc1__prototype__1' });
       expect(doc.currentStage).toBe('prototype');
     });
 

@@ -20,50 +20,40 @@ import { Job, Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { LlmService } from '../prd/llm.service';
-import type { RepairContext } from '../agent/repair';
 import { LocalDeployService } from '../deploy/local-deploy.service';
 import { CodegenGateService } from '../gate/codegen-gate';
-import { TraceStore, summarizeUsage } from '../trace/trace.store';
-import { assertWithinBudget, pipelineTokenBudget, sumUsage, totalTokens } from '../trace/budget';
-import { classifyError } from '@apploom/llm';
+import { TraceStore } from '../trace/trace.store';
 import { nextStageOf, stageNode } from '@apploom/shared';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
-import { createStageRunner, type StageRunContext, type StageRunResult } from './stage-handlers';
-import { applyConfirm, applyHandoff, applyRepair, applyRetry, applyStageFailure, applyStageStart, applyStageSuccess, type HandoffKind, type StageFailureInfo } from './transitions';
-import {
-  PIPELINE_STAGES,
-  AttemptRecord,
-  AttemptTrigger,
-  ErrorClass,
-  LlmLogEntry,
-  PipelineDoc,
-  PipelineDocSummary,
-  PipelineEvent,
-  PipelineStage,
-  createPipelineDoc,
-} from './pipeline.types';
+import { createStageRunner } from './stage-handlers';
+import { StageExecutor } from './stage-executor';
+import { applyConfirm, applyHandoff, applyRepair, applyRetry, applyStageFailure, applyStageStart, applyStageSuccess, type HandoffKind } from './transitions';
+import { AttemptRecord, PipelineDoc, PipelineDocSummary, PipelineEvent, PipelineStage, createPipelineDoc } from './pipeline.types';
 
 /** 队列名可由 PIPELINE_QUEUE 覆盖：评测在独立队列里跑，避免与同时运行的开发 API 抢任务 */
 export const PIPELINE_QUEUE = process.env.PIPELINE_QUEUE || 'apploom-pipeline';
 
-/** BullMQ job data：只携带 docId + 当前阶段，状态全在 Redis doc 里 */
+/**
+ * BullMQ job data：只携带 docId + 阶段 + 序号，状态全在 Redis doc 里。
+ * seq = 这次入队意图对应的执行序号（入队时该阶段 attempts + 1）。jobId 由它拼成，所以：
+ *   - 同一意图被重复入队（崩溃重启后重复调度、重复交接）→ jobId 相同，BullMQ 直接去重
+ *   - 不同意图（重试 / 修复 / 再次确认）→ attempts 已变，seq 不同，不会被误吞
+ * 老版本入队的 job 没有 seq，按旧行为处理。
+ */
 interface PipelineJobData {
   docId: string;
   stage: PipelineStage;
+  seq?: number;
 }
 
-interface StageOutcome {
-  result?: StageRunResult;
-  failure?: StageFailureInfo;
-  logs: LlmLogEntry[];
+/** 入队幂等键。不能是纯数字（BullMQ 拒绝），这里用 文档id__阶段__序号 */
+export function stageJobId(docId: string, stage: PipelineStage, seq: number): string {
+  return `${docId}__${stage}__${seq}`;
 }
 
-/** 模型输出不合规（含被 token 上限截断）时，自动回喂错误重新生成的最大轮数（STAGE_AUTO_REPAIRS，默认 1） */
-function stageAutoRepairs(): number {
-  const n = Number(process.env.STAGE_AUTO_REPAIRS ?? 1);
-  return Number.isInteger(n) && n >= 0 ? n : 1;
-}
+/** 下一次执行该阶段时的序号：执行开始时 attempts 会 +1 */
+const nextSeq = (doc: PipelineDoc, stage: PipelineStage): number => doc.stages[stage].attempts + 1;
 
 @Injectable()
 export class PipelineService implements OnModuleInit, OnModuleDestroy {
@@ -71,8 +61,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
   private queue: Queue;
   private worker: Worker;
   private connection: Redis;
-  /** 执行单个阶段：检查上游 → 交给该阶段的处理器（见 stage-handlers.ts） */
-  private readonly runStage: (ctx: StageRunContext) => Promise<StageRunResult>;
+  /** 执行单个阶段（含自动修复 / 截断自愈 / 预算守卫 / trace），见 stage-executor.ts */
+  private readonly executor: StageExecutor;
 
   constructor(
     private readonly store: PipelineStore,
@@ -82,7 +72,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     private readonly gate: CodegenGateService,
     private readonly trace: TraceStore,
   ) {
-    this.runStage = createStageRunner({ agents: llm, gate, deploy: deploySvc });
+    this.executor = new StageExecutor(bus, trace, createStageRunner({ agents: llm, gate, deploy: deploySvc }));
     this.connection = new Redis({
       host: process.env.REDIS_HOST ?? 'localhost',
       port: Number(process.env.REDIS_PORT ?? 6379),
@@ -116,7 +106,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     doc.id = randomUUID();
     doc.currentStage = 'requirement';
     await this.store.save(doc);
-    await this.enqueueStage(doc.id, 'requirement');
+    await this.enqueueStage(doc.id, 'requirement', nextSeq(doc, 'requirement'));
     return doc.id;
   }
 
@@ -162,7 +152,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       return true;
     }
     await this.emitSnapshot(id);
-    await this.enqueueStage(id, outcome.next);
+    await this.enqueueStage(id, outcome.next, nextSeq(r.doc, outcome.next));
     this.bus.emit(id, { type: 'job', status: 'running' });
     return true;
   }
@@ -183,7 +173,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     const target = r?.result;
     if (!target) return false;
     await this.emitSnapshot(id);
-    await this.enqueueStage(id, target);
+    await this.enqueueStage(id, target, nextSeq(r.doc, target));
     this.bus.emit(id, { type: 'job', status: 'running' });
     return true;
   }
@@ -204,7 +194,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     });
     if (!r?.result) return false;
     await this.emitSnapshot(id);
-    await this.enqueueStage(id, stage);
+    await this.enqueueStage(id, stage, nextSeq(r.doc, stage));
     this.bus.emit(id, { type: 'job', status: 'running' });
     return true;
   }
@@ -219,6 +209,13 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
     const state = doc.stages[stage];
     const alreadyDone = state.status === 'done';
+
+    // 过期 job：阶段已被修复 / 重试重置为 pending，而这个 job 对应的是更早的一次入队意图 → 丢弃，由新意图的 job 负责。
+    // 只校验 pending：running（崩溃后被重新投递）与 done（交接前崩溃）都要继续跑，靠 handoffs / 执行身份保证幂等
+    if (job.data.seq !== undefined && state.status === 'pending' && job.data.seq !== nextSeq(doc, stage)) {
+      this.logger.warn(`pipeline ${docId} 阶段 ${stage} 的 job（seq=${job.data.seq}）已过期（当前应为 ${nextSeq(doc, stage)}），丢弃`);
+      return;
+    }
 
     // 幂等：阶段已完成且交接已完成（崩溃后 job 重新入队）→ 直接返回
     if (alreadyDone && doc.handoffs[stage]) return;
@@ -235,7 +232,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       await this.emitSnapshot(docId);
       this.bus.emit(docId, { type: 'stage', stage, status: 'running' });
 
-      const outcome = await this.executeAttempts(docId, stage, doc, myAttempt);
+      const outcome = await this.executor.execute(docId, stage, doc, myAttempt);
       const { result, failure, logs } = outcome;
 
       if (failure) {
@@ -284,7 +281,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       this.bus.emit(docId, { type: 'stage', stage, status: 'waiting_confirm' });
       this.bus.emit(docId, { type: 'job', status: 'waiting_confirm' });
     } else if (kind === 'advance') {
-      await this.enqueueStage(docId, next!);
+      await this.enqueueStage(docId, next!, nextSeq(handed.doc, next!));
     } else {
       this.bus.emit(docId, { type: 'job', status: 'completed' });
       this.bus.emit(docId, { type: 'done', doc: handed.doc });
@@ -296,122 +293,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     this.logger.warn(`pipeline ${docId} 阶段 ${stage} 第 ${attempt} 次执行已被修复/重试取代，丢弃其${what}结果`);
   }
 
-  private async enqueueStage(docId: string, stage: PipelineStage): Promise<void> {
-    await this.queue.add(stage, { docId, stage });
-  }
-
-  /** 构造带反馈的重生成上下文（有 feedback 或上次失败时） */
-  private buildRepair(stage: PipelineStage, doc: PipelineDoc): RepairContext | undefined {
-    const state = doc.stages[stage];
-    if (!state.feedback) return undefined;
-    const lastHistory = state.history?.[state.history.length - 1];
-    return {
-      feedback: state.feedback,
-      previous: lastHistory?.result ?? state.result,
-      previousError: lastHistory?.error,
-    };
-  }
-
-  /**
-   * 执行一个阶段并为每次执行记录 Attempt（trace）。
-   * 按错误类别决定恢复动作：模型输出不合规（invalid_output）自动回喂校验错误再生成，
-   * 其余类别（permission / verification / execution / transient 重试耗尽 …）直接失败，不盲目重试。
-   */
-  private async executeAttempts(docId: string, stage: PipelineStage, doc: PipelineDoc, firstN: number): Promise<StageOutcome> {
-    const userRepair = this.buildRepair(stage, doc);
-    const maxAuto = stageAutoRepairs();
-    const onToken = (token: string) => this.bus.emit(docId, { type: 'token', stage, token });
-    let repair = userRepair;
-    let truncations = 0;
-    let trigger: AttemptTrigger = userRepair ? 'repair' : firstN > 1 ? 'retry' : 'initial';
-
-    for (let auto = 0; ; auto++) {
-      const logs: LlmLogEntry[] = [];
-      const started = Date.now();
-      let result: StageRunResult | undefined;
-      let failure: StageFailureInfo | undefined;
-
-      // 预算守卫：基线 = 本流水线此前所有执行的用量；每次调用模型前再叠加本次已产生的用量
-      const baseline = totalTokens(await this.priorUsage(docId, doc));
-      const guard = () => assertWithinBudget(baseline + totalTokens(summarizeUsage(logs)));
-
-      try {
-        guard();
-        result = await this.runStage({ docId, doc, stage, onToken, logs, repair, guard });
-        if (result.error) {
-          failure = { message: result.error, errorClass: result.errorClass ?? 'invalid_output' };
-        } else if ((result.result as { status?: string } | undefined)?.status === 'failed') {
-          // 阶段「产出失败但有 raw/result」（如 deploy install 失败）
-          failure = {
-            message: result.raw?.split('\n').filter(Boolean).slice(-1)[0] ?? '部署失败',
-            errorClass: 'execution',
-            keepResult: true,
-          };
-        }
-      } catch (e) {
-        failure = { message: (e as Error).message, errorClass: classifyError(e) };
-      }
-
-      const record: AttemptRecord = {
-        id: randomUUID(),
-        docId,
-        stage,
-        n: firstN + auto,
-        trigger,
-        startedAt: new Date(started).toISOString(),
-        finishedAt: new Date().toISOString(),
-        durationMs: Date.now() - started,
-        outcome: failure ? 'failed' : 'done',
-        errorClass: failure?.errorClass,
-        error: failure?.message,
-        feedback: repair?.feedback,
-        usage: summarizeUsage(logs),
-        llmCalls: logs.length,
-        llmLogs: logs,
-      };
-      await this.trace.append(record);
-
-      if (failure?.errorClass === 'truncated' && auto < maxAuto) {
-        // 截断：原样重试必然再被截断。放大输出上限并要求精简；被截断的半截输出不回喂（既无法解析又白占 token）
-        truncations++;
-        onToken(`\n[auto-repair] 输出被 token 上限截断，放大上限并要求精简后重新生成（${auto + 1}/${maxAuto}）\n`);
-        const feedback = [
-          userRepair?.feedback,
-          '上一次输出因超出 token 上限被截断，JSON 不完整。请在保持功能完整的前提下精简输出：减少文件/页面数量，去掉注释、重复样板与冗长文案，确保完整、合法的 JSON 能在上限内输出完毕。',
-        ]
-          .filter(Boolean)
-          .join('\n\n');
-        repair = { feedback, previous: userRepair?.previous, previousError: failure.message, maxTokensLevel: truncations };
-        trigger = 'auto-repair';
-        continue;
-      }
-
-      if (failure?.errorClass === 'invalid_output' && auto < maxAuto) {
-        onToken(`\n[auto-repair] 输出未通过校验，回喂错误后重新生成（${auto + 1}/${maxAuto}）\n`);
-        const feedback = [
-          userRepair?.feedback,
-          `上一次输出未通过契约校验，请严格按要求的 JSON 结构重新输出完整结果。校验错误：${failure.message}`,
-        ]
-          .filter(Boolean)
-          .join('\n\n');
-        repair = { feedback, previous: userRepair?.previous, previousError: failure.message, maxTokensLevel: truncations || undefined };
-        trigger = 'auto-repair';
-        continue;
-      }
-      return { result, failure, logs };
-    }
-  }
-
-  /**
-   * 本流水线此前已消耗的用量（预算基线）。trace 读取失败时不能当 0（预算会在故障期间失效），
-   * 退化为文档里各阶段已保存的 LLM 日志用量——只含每阶段最近一次执行，是下限估计，但好过没有。
-   */
-  private async priorUsage(docId: string, doc: PipelineDoc): Promise<{ promptTokens: number; completionTokens: number }> {
-    try {
-      return sumUsage(await this.trace.list(docId));
-    } catch (e) {
-      this.logger.warn(`读取 trace 失败，预算基线退化为文档内已保存日志的用量（下限估计）: ${(e as Error).message}`);
-      return summarizeUsage(PIPELINE_STAGES.flatMap((s) => doc.stages[s]?.llmLogs ?? []));
-    }
+  private async enqueueStage(docId: string, stage: PipelineStage, seq: number): Promise<void> {
+    await this.queue.add(stage, { docId, stage, seq }, { jobId: stageJobId(docId, stage, seq) });
   }
 }
