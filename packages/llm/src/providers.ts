@@ -57,6 +57,12 @@ function streamUsageOr(fallback: boolean): boolean {
   return v === undefined || v === '' ? fallback : v === '1' || v.toLowerCase() === 'true';
 }
 
+/** LLM_JSON_SCHEMA=1/0 可覆盖 provider 默认：1 = 发 strict json_schema，0 = 回退 json_object */
+function jsonSchemaOr(fallback: boolean): boolean {
+  const v = process.env.LLM_JSON_SCHEMA;
+  return v === undefined || v === '' ? fallback : v === '1' || v.toLowerCase() === 'true';
+}
+
 export type ProviderName = 'deepseek' | 'hunyuan';
 
 /** 预设 provider（环境变量可覆盖 baseURL / model） */
@@ -66,9 +72,9 @@ export function resolveProvider(name: ProviderName, apiKey: string): LLMProvider
       return {
         baseURL: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
         apiKey,
-        // deepseek-chat 当前稳定支持 json_object；json_schema 视版本开 supportsJsonSchema
+        // DeepSeek 官方接口只支持 json_object；LLM_JSON_SCHEMA=1 可在确认服务端支持后强制开启
         model: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
-        supportsJsonSchema: false,
+        supportsJsonSchema: jsonSchemaOr(false),
         streamUsage: streamUsageOr(true),
       };
     case 'hunyuan':
@@ -77,7 +83,8 @@ export function resolveProvider(name: ProviderName, apiKey: string): LLMProvider
         apiKey,
         // 用户指定的混元模型：hy3（可用 HUNYUAN_MODEL 覆盖）
         model: process.env.HUNYUAN_MODEL ?? 'hy3',
-        supportsJsonSchema: false,
+        // TokenHub 接受 strict json_schema（5 个阶段 schema 实测均 200）；出问题时 LLM_JSON_SCHEMA=0 回退
+        supportsJsonSchema: jsonSchemaOr(true),
         streamUsage: streamUsageOr(false),
       };
   }
