@@ -15,7 +15,7 @@
  * 幂等：doc.handoffs[stage] 标记「该阶段已完成交接」，
  *  job 重复执行（重启后 BullMQ 重新入队）时直接跳过，避免链式重复入队。
  */
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
@@ -24,6 +24,7 @@ import { LocalDeployService } from '../deploy/local-deploy.service';
 import { CodegenGateService } from '../gate/codegen-gate';
 import { TraceStore } from '../trace/trace.store';
 import { nextStageOf, stageNode } from '@apploom/shared';
+import type { PipelineEventBus } from './pipeline.bus';
 import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
 import { createStageRunner } from './stage-handlers';
@@ -66,7 +67,8 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly store: PipelineStore,
-    private readonly bus: PipelineBus,
+    // 接口在运行时不存在，Nest 无法按类型注入，必须显式指定令牌；换总线实现时只需 provide: PipelineBus, useClass: 新实现
+    @Inject(PipelineBus) private readonly bus: PipelineEventBus,
     private readonly llm: LlmService,
     private readonly deploySvc: LocalDeployService,
     private readonly gate: CodegenGateService,

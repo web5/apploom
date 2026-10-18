@@ -13,7 +13,7 @@ import { classifyError } from '@apploom/llm';
 import type { RepairContext } from '../agent/repair';
 import { assertWithinBudget, sumUsage, totalTokens } from '../trace/budget';
 import { TraceStore, summarizeUsage } from '../trace/trace.store';
-import type { PipelineBus } from './pipeline.bus';
+import type { PipelineEventBus } from './pipeline.bus';
 import { PIPELINE_STAGES, type AttemptRecord, type AttemptTrigger, type LlmLogEntry, type PipelineDoc, type PipelineStage } from './pipeline.types';
 import type { StageRunContext, StageRunResult } from './stage-handlers';
 import type { StageFailureInfo } from './transitions';
@@ -34,7 +34,7 @@ export class StageExecutor {
   private readonly logger = new Logger(StageExecutor.name);
 
   constructor(
-    private readonly bus: Pick<PipelineBus, 'emit'>,
+    private readonly bus: Pick<PipelineEventBus, 'emit'>,
     private readonly trace: Pick<TraceStore, 'append' | 'list'>,
     private readonly runStage: (ctx: StageRunContext) => Promise<StageRunResult>,
   ) {}
