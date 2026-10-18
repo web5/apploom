@@ -35,3 +35,6 @@ apps/api/eval/results/
 # vim 临时文件
 *.swp
 *.swo
+
+# Claude Code 个人配置
+.claude/settings.local.json
