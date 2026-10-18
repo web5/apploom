@@ -29,7 +29,8 @@ import { PipelineBus } from './pipeline.bus';
 import { PipelineStore } from './pipeline.store';
 import { createStageRunner } from './stage-handlers';
 import { StageExecutor } from './stage-executor';
-import { applyConfirm, applyHandoff, applyRepair, applyRetry, applyStageFailure, applyStageStart, applyStageSuccess, type HandoffKind } from './transitions';
+import { currentUpstreamFingerprints, isStageStillValid, staleCascadeEnabled } from './invalidate';
+import { applyConfirm, applyHandoff, applyRepair, applyRetry, applyRevalidate, applyStageFailure, applyStageStart, applyStageSuccess, type HandoffKind } from './transitions';
 import { AttemptRecord, PipelineDoc, PipelineDocSummary, PipelineEvent, PipelineStage, createPipelineDoc } from './pipeline.types';
 
 /** 队列名可由 PIPELINE_QUEUE 覆盖：评测在独立队列里跑，避免与同时运行的开发 API 抢任务 */
@@ -190,7 +191,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
    */
   async repair(id: string, stage: PipelineStage, feedback?: string): Promise<boolean> {
     const r = await this.store.mutate(id, (d, skip) => {
-      const ok = applyRepair(d, stage, feedback);
+      const ok = applyRepair(d, stage, feedback, { keepStale: staleCascadeEnabled() });
       if (!ok) skip();
       return ok;
     });
@@ -210,17 +211,35 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     if (!doc) throw new Error(`pipeline ${docId} 不存在`);
 
     const state = doc.stages[stage];
-    const alreadyDone = state.status === 'done';
+    let alreadyDone = state.status === 'done';
 
     // 过期 job：阶段已被修复 / 重试重置为 pending，而这个 job 对应的是更早的一次入队意图 → 丢弃，由新意图的 job 负责。
     // 只校验 pending：running（崩溃后被重新投递）与 done（交接前崩溃）都要继续跑，靠 handoffs / 执行身份保证幂等
-    if (job.data.seq !== undefined && state.status === 'pending' && job.data.seq !== nextSeq(doc, stage)) {
+    if (job.data.seq !== undefined && (state.status === 'pending' || state.status === 'stale') && job.data.seq !== nextSeq(doc, stage)) {
       this.logger.warn(`pipeline ${docId} 阶段 ${stage} 的 job（seq=${job.data.seq}）已过期（当前应为 ${nextSeq(doc, stage)}），丢弃`);
       return;
     }
 
+    // 过期的阶段：产物基于的上游若经指纹比对没有变化，仍然有效——直接沿用，不重跑，只补做交接
+    if (state.status === 'stale' && isStageStillValid(doc, stage)) {
+      const re = await this.store.mutate(docId, (d, skip) => {
+        const ok = applyRevalidate(d, stage);
+        if (!ok) skip();
+        return ok;
+      });
+      if (re?.result) {
+        alreadyDone = true;
+        this.logger.log(`pipeline ${docId} 阶段 ${stage} 的产物依据的上游未变化，沿用已有产物，跳过重跑`);
+        this.bus.emit(docId, { type: 'stage', stage, status: 'done', summary: state.summary, result: state.result });
+      }
+    }
+
     // 幂等：阶段已完成且交接已完成（崩溃后 job 重新入队）→ 直接返回
     if (alreadyDone && doc.handoffs[stage]) return;
+
+    // 这次执行所依据的上游指纹：用开始时读到的文档算，而不是成功写入时——
+    // 执行期间上游若被修改，写入的血统仍然是它真正用过的那一版，之后才能被识别为过期
+    const consumed = currentUpstreamFingerprints(doc, stage);
 
     // 本次执行的「身份」：开始执行时 attempts 自增后的值。之后所有写入都要确认自己仍是当前这次执行——
     // 用户在阶段运行期间点了「修复/重试」，旧执行跑完时不能把新状态盖掉。
@@ -260,7 +279,7 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
       }
 
       const written = await this.store.mutate(docId, (d, skip) => {
-        const ok = applyStageSuccess(d, stage, myAttempt, result!, logs);
+        const ok = applyStageSuccess(d, stage, myAttempt, result!, logs, consumed);
         if (!ok) skip();
         return ok;
       });

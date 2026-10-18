@@ -28,7 +28,8 @@ export type StageStatus =
   | 'running'          // 正在执行
   | 'done'             // 完成，产出已保存
   | 'failed'           // 失败，可重试
-  | 'waiting_confirm'; // 等待确认后继续下一步
+  | 'waiting_confirm'  // 等待确认后继续下一步
+  | 'stale';           // 产物还在，但它基于的上游已经变了（STAGE_STALE_CASCADE 开启时才会出现）
 
 import type { ErrorClass, LlmLogEntry, LlmUsage } from '@apploom/llm';
 
@@ -67,6 +68,11 @@ export interface StageState {
   status: StageStatus;
   /** 结构化产出（PRD / Prototype / Design / Codegen / Deploy） */
   result?: unknown;
+  /** 当前产出的内容指纹（稳定序列化 + SHA-256 前 16 位）；产出成功时写入 */
+  fingerprint?: string;
+  /** 产出时所依据的上游指纹：键是 STAGE_GRAPH 入边的 from（上游阶段 id；首阶段为 '@input'），值是当时那份上游的指纹。
+   *  用来回答「这份产物基于哪一版上游」，也是判断它是否已过期的依据 */
+  consumed?: Record<string, string>;
   /** LLM 原始输出（调试用） */
   raw?: string;
   /** 摘要（供前端卡片展示，如功能数 / 文件数） */

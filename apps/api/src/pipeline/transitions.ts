@@ -8,6 +8,7 @@
  */
 import { downstreamOf, nextStageOf } from '@apploom/shared';
 import type { ErrorClass, LlmLogEntry, PipelineDoc, PipelineStage } from './pipeline.types';
+import { fingerprint } from './fingerprint';
 import { PIPELINE_STAGES } from './pipeline.types';
 
 // ───────────────────────── 用户命令：confirm / retry / repair ─────────────────────────
@@ -51,7 +52,7 @@ export function applyRetry(d: PipelineDoc, stage?: PipelineStage): PipelineStage
  * 带反馈重新生成某个阶段。feedback 显式传入 = 手动修复（可为空串 = 无反馈重跑）；省略 = 自动修复，用上次 error 作反馈。
  * 把当前 result / error 归档到 history 供模型参考，并让所有依赖它的下游阶段作废、等待重跑。
  */
-export function applyRepair(d: PipelineDoc, stage: PipelineStage, feedback?: string): boolean {
+export function applyRepair(d: PipelineDoc, stage: PipelineStage, feedback?: string, opts: { keepStale?: boolean } = {}): boolean {
   const st = d.stages[stage];
   if (!st) return false;
   const isAuto = feedback === undefined;
@@ -68,9 +69,13 @@ export function applyRepair(d: PipelineDoc, stage: PipelineStage, feedback?: str
   d.handoffs[stage] = false;
   // 下游阶段要重新跑（上游变了，下游产出作废）。由图推导，不是按位置猜
   for (const s of downstreamOf(stage)) {
-    if (d.stages[s].status === 'done' || d.stages[s].status === 'failed') {
-      resetStage(d.stages[s]);
-      d.stages[s].status = 'pending';
+    const ds = d.stages[s];
+    if (opts.keepStale && (ds.status === 'done' || ds.status === 'stale') && ds.result !== undefined) {
+      // 保留旧产物（可对照、可能仍有效），只标记为过期；轮到它时再用指纹判断是否真要重跑
+      ds.status = 'stale';
+    } else if (ds.status === 'done' || ds.status === 'failed' || ds.status === 'stale') {
+      resetStage(ds);
+      ds.status = 'pending';
     }
     d.handoffs[s] = false;
   }
@@ -104,6 +109,15 @@ export function applyStageStart(d: PipelineDoc, stage: PipelineStage): number {
   d.status = 'running';
   d.currentStage = stage;
   const st = d.stages[stage];
+  if (st.status === 'stale') {
+    // 过期产物确认要重跑了：归档旧版本供「上次产出」参考，并清掉，免得被下游当成有效上游
+    (st.history ??= []).push({ result: st.result, error: undefined });
+    st.result = undefined;
+    st.raw = undefined;
+    st.summary = undefined;
+    st.fingerprint = undefined;
+    st.consumed = undefined;
+  }
   st.status = 'running';
   st.error = undefined;
   st.errorClass = undefined;
@@ -144,11 +158,21 @@ export function applyStageFailure(d: PipelineDoc, stage: PipelineStage, attempt:
 }
 
 /** 执行成功。已被取代的旧执行返回 false */
-export function applyStageSuccess(d: PipelineDoc, stage: PipelineStage, attempt: number, product: StageProduct, logs: LlmLogEntry[]): boolean {
+export function applyStageSuccess(
+  d: PipelineDoc,
+  stage: PipelineStage,
+  attempt: number,
+  product: StageProduct,
+  logs: LlmLogEntry[],
+  /** 这次执行开始时所依据的上游指纹（见 invalidate.currentUpstreamFingerprints）；不传则不记录血统 */
+  consumed?: Record<string, string>,
+): boolean {
   if (!isCurrentRun(d, stage, attempt)) return false;
   const st = d.stages[stage];
   st.status = 'done';
   st.result = product.result;
+  st.fingerprint = product.result === undefined ? undefined : fingerprint(product.result);
+  st.consumed = consumed;
   st.raw = product.raw;
   st.summary = product.summary;
   st.llmLogs = logs;
@@ -172,5 +196,16 @@ export function applyHandoff(d: PipelineDoc, stage: PipelineStage, attempt: numb
     d.status = 'completed';
     d.currentStage = null;
   }
+  return true;
+}
+
+/**
+ * 重新确认一个过期阶段的产物仍然有效（它依据的上游经比对没有变化）：直接回到 done，不重跑。
+ * 只允许 stale → done；其它状态返回 false 且不改文档。
+ */
+export function applyRevalidate(d: PipelineDoc, stage: PipelineStage): boolean {
+  const st = d.stages[stage];
+  if (st.status !== 'stale' || st.result === undefined) return false;
+  st.status = 'done';
   return true;
 }
