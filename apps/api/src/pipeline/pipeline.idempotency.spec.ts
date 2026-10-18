@@ -41,7 +41,7 @@ describe('真实 BullMQ：相同 jobId 去重', () => {
     if (reachable) { await queue.obliterate({ force: true }); await queue.close(); }
     conn?.disconnect();
   });
-  const it_ = (n: string, fn: () => Promise<void>) => it(n, async () => { if (reachable) await fn(); });
+  const it_ = (n: string, fn: () => Promise<void>, timeout?: number) => it(n, async () => { if (reachable) await fn(); }, timeout);
 
   it_('同一意图重复入队 100 次只留一个 job；不同 seq 各自独立', async () => {
     const add = (seq: number) => queue.add('design', { docId: 'd', stage: 'design', seq }, { jobId: stageJobId('d', 'design', seq) });
@@ -52,24 +52,35 @@ describe('真实 BullMQ：相同 jobId 去重', () => {
   });
 
   it_('job 被 worker 真实处理完成之后，再入队相同 jobId 也不会重复执行；换 seq 才会执行', async () => {
+    // 用独立的队列：上一个测试往共用队列里留了等待中的 job，worker 一启动就可能抢先处理，让 processed 混进无关的 id
+    const ownName = `${name}-worker`;
+    const ownQueue = new Queue(ownName, { connection: conn });
     const processed: string[] = [];
-    const worker = new Worker(name, async (job) => { processed.push(job.id as string); }, { connection: conn });
-    const done = (n: number) => new Promise<void>((resolve) => { const t = setInterval(() => { if (processed.length >= n) { clearInterval(t); resolve(); } }, 20); });
+    let worker: Worker | undefined;
     try {
-      await queue.obliterate({ force: true });
-      const add = (seq: number) => queue.add('codegen', { docId: 'd2', stage: 'codegen', seq }, { jobId: stageJobId('d2', 'codegen', seq) });
+      worker = new Worker(ownName, async (job) => { processed.push(job.id as string); }, { connection: conn });
+      const waitFor = async (n: number) => {
+        const deadline = Date.now() + 10_000;
+        while (processed.length < n) {
+          if (Date.now() > deadline) throw new Error(`等待 worker 处理第 ${n} 个 job 超时，已处理: ${JSON.stringify(processed)}`);
+          await new Promise((r) => setTimeout(r, 20));
+        }
+      };
+      const add = (seq: number) => ownQueue.add('codegen', { docId: 'd2', stage: 'codegen', seq }, { jobId: stageJobId('d2', 'codegen', seq) });
       await add(1);
-      await done(1);
+      await waitFor(1);
       await add(1); // 迟到的重复入队（如崩溃重启后重复调度）
       await new Promise((r) => setTimeout(r, 300));
       expect(processed).toEqual(['d2__codegen__1']);
       await add(2); // 新的意图（比如重试）
-      await done(2);
+      await waitFor(2);
       expect(processed).toEqual(['d2__codegen__1', 'd2__codegen__2']);
     } finally {
-      await worker.close();
+      await worker?.close();
+      await ownQueue.obliterate({ force: true });
+      await ownQueue.close();
     }
-  });
+  }, 30_000);
 });
 
 class FakeStore {
