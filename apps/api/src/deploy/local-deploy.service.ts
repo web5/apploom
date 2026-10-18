@@ -67,9 +67,10 @@ async function runCmd(
   onLog: (line: string) => void,
   timeoutMs: number,
   approver: Approver,
+  tenant?: string,
 ): Promise<number> {
   onLog(`$ ${cmd} ${args.join(' ')}`);
-  const sbx = sandboxContext(cwd);
+  const sbx = sandboxContext(cwd, {}, process.env, tenant);
   const r = await tools.execute(
     'shell',
     { command: cmd, args, cwd, timeoutMs, maxOutputBytes: 1024 * 1024 },
@@ -108,11 +109,13 @@ async function inspectProcess(pid: string): Promise<{ name: string; cwd: string 
 }
 
 /**
- * 释放端口。占用者若是 AppLoom 之前部署的 dev server（cwd 在部署目录下）直接终止；
- * 其它进程属于「杀别人的进程」，必须经人工审批（HITL）。返回 null = 端口可用，否则为失败原因。
+ * 释放端口。占用者若是「同一条流水线」之前部署的 dev server（cwd 在 ROOT/{docId} 下）直接终止；
+ * 是别的流水线（别的用户）的预览：不终止，保留它，交由 dev server 自己换端口（vite / next 默认会递增）；
+ * 其它进程属于「杀别人的进程」，必须经人工审批（HITL）。返回 null = 可以继续，否则为失败原因。
  */
-async function freePort(
+export async function freePort(
   port: number,
+  docId: string,
   onLog: (line: string) => void,
   askApproval: (summary: string) => Promise<ApprovalDecision>,
 ): Promise<string | null> {
@@ -124,8 +127,13 @@ async function freePort(
 
   // macOS 的 /tmp 是 /private/tmp 的软链，lsof 报告真实路径，两种前缀都要认
   const roots = [ROOT, await fs.realpath(ROOT).catch(() => ROOT)];
+  const myRoots = roots.map((r) => path.join(r, docId));
   for (const pid of pids) {
     const info = await inspectProcess(pid);
+    if (isOwnDeployProcess(info.cwd, roots) && !isOwnDeployProcess(info.cwd, myRoots)) {
+      onLog(`[port] ${port} 被另一条流水线的预览占用（PID ${pid}），不终止，让 dev server 自行换端口`);
+      continue;
+    }
     if (!isOwnDeployProcess(info.cwd, roots)) {
       const summary = `终止占用端口 ${port} 的进程 PID ${pid}（${info.name}，cwd: ${info.cwd || '未知'}）——该进程不是 AppLoom 部署的 dev server`;
       onLog(`[port] ${summary}，等待人工审批`);
@@ -177,6 +185,7 @@ export class LocalDeployService {
     },
     onProgress: (chunk: string) => void,
     port?: number,
+    ownerId?: string,
   ): Promise<DeployOutput> {
     const log: string[] = [];
     const writeLog = (line: string) => {
@@ -195,7 +204,7 @@ export class LocalDeployService {
     if (existsSync(path.join(root, 'package.json'))) {
       const pm = detectPackageManager(root, codegen.runCommand);
       step(`[install] ${pm.installCmd[0]} · ${codegen.dependencies.length} 个依赖（最多 5 分钟）`);
-      const installCode = await runCmd(pm.installCmd[0], pm.installCmd.slice(1), root, writeLog, 5 * 60 * 1000, this.approvals.approverFor(docId, 'deploy'));
+      const installCode = await runCmd(pm.installCmd[0], pm.installCmd.slice(1), root, writeLog, 5 * 60 * 1000, this.approvals.approverFor(docId, 'deploy'), ownerId);
       if (installCode !== 0) {
         writeLog(`[install] ✕ 退出码 ${installCode}`);
         step(`[install] ✕ 退出码 ${installCode}`);
@@ -231,7 +240,7 @@ export class LocalDeployService {
 
     // 启动前：若指定了期望端口，先检查占用；自己的旧 dev server 直接终止，其它进程需人工审批
     if (port) {
-      const blocked = await freePort(port, writeLog, (summary) =>
+      const blocked = await freePort(port, docId, writeLog, (summary) =>
         this.approvals.request({ docId, stage: 'deploy', tool: 'kill_port', summary, risk: 'high' }),
       );
       if (blocked) return abort(blocked);
@@ -241,7 +250,9 @@ export class LocalDeployService {
     // 若 runCommand 含 shell 操作符（&& | ; 等），按空格拆会把这些字符当成参数。
     // 含元字符时改用 shell 执行（组合命令只能靠 shell 解析）；纯命令保持 shell:false 安全拆分。
     // dev server 跑的是 LLM 生成的代码：只给最小环境，并套上 OS 级沙箱（见 sandbox/）
-    const sbx = sandboxContext(root, { BROWSER: 'none', CI: '0' });
+    const sbx = sandboxContext(root, { BROWSER: 'none', CI: '0' }, process.env, ownerId);
+    // 容器里的端口默认不对宿主开放，预览起不来；与其启动一个访问不到的「成功部署」，不如明确失败（install / 门禁在容器里照常可用）
+    if (sbx.executor.startsWith('container')) return abort('容器沙箱（SANDBOX_MODE=container）暂不支持 dev server 预览（需要端口发布 + 反向代理）；依赖安装与代码门禁不受影响');
     const hasShellMeta = /[&|;<>]/.test(runCommand);
     const tokens = runCommand.split(/\s+/);
     const launch = hasShellMeta ? { command: '/bin/sh', args: ['-c', runCommand] } : { command: tokens[0], args: tokens.slice(1) };

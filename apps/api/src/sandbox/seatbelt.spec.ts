@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { createDefaultRegistry } from '@apploom/tools';
+import { sandboxHome, tenantDirName } from './sandbox-env';
 import { buildPolicy, findSecretEnvNames, infraPorts, resolveExecutor, sandboxContext, sandboxMode } from './sandbox';
 import { buildSeatbeltProfile, SeatbeltExecutor, type SandboxPolicy } from './seatbelt';
 
@@ -105,6 +106,23 @@ darwin('Seatbelt 真实隔离（真实进程）', () => {
     expect(sh(`cat ${homeSecret}`).out).not.toContain('HOME-SECRET');
     expect(sh(`cat ${path.join(otherDoc, 'data.txt')}`).out).not.toContain('OTHER-DOC-SECRET');
     expect(sh(`cat ${ws}/in.txt`).out).toContain('ws-content'); // 对照：自己的能读
+  });
+
+  it('多租户：自己租户的 HOME 可读写，其它租户的 HOME（含包管理器缓存）读不到也写不了', () => {
+    const mine = sandboxHome(env, 'alice');
+    const theirs = sandboxHome(env, 'bob');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(theirs, { recursive: true });
+    writeFileSync(path.join(theirs, 'cache.txt'), 'BOB-CACHE');
+    const tenantSh = (script: string) => {
+      const w = exec.wrap(buildPolicy(ws, env, 'alice'), { command: '/bin/sh', args: ['-c', script] });
+      const r = spawnSync(w.command, w.args, { encoding: 'utf-8', env: { PATH: '/usr/bin:/bin' } });
+      return { out: `${r.stdout}${r.stderr}`, code: r.status };
+    };
+    expect(tenantSh(`echo A > ${mine}/own.txt && cat ${mine}/own.txt`).out).toContain('A');
+    expect(tenantSh(`cat ${theirs}/cache.txt`).out).not.toContain('BOB-CACHE');
+    expect(tenantSh(`echo x > ${theirs}/poison.txt`).code).not.toBe(0);
+    expect(existsSync(path.join(theirs, 'poison.txt'))).toBe(false);
   });
 
   it('不能给沙箱外的进程发信号；沙箱内自己的子进程可以', async () => {

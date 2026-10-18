@@ -145,7 +145,7 @@ export class CodegenGateService {
 
   constructor(private readonly approvals: ApprovalService) {}
 
-  async verify(docId: string, codegen: CodegenInput, onLog: (line: string) => void): Promise<GateReport> {
+  async verify(docId: string, codegen: CodegenInput, onLog: (line: string) => void, tenant?: string): Promise<GateReport> {
     const report: GateReport = { passed: false, failures: [], checks: [] };
     const approver = this.approvals.approverFor(docId, 'codegen');
     const record = async (name: GateCheck, run: () => Promise<GateFailure | null>) => {
@@ -184,14 +184,14 @@ export class CodegenGateService {
 
     const pm = detectPackageManager(root, codegen.runCommand);
     const installed = await record('install', async () => {
-      const r = await this.exec(pm.installCmd[0], pm.installCmd.slice(1), root, INSTALL_TIMEOUT_MS, approver);
+      const r = await this.exec(pm.installCmd[0], pm.installCmd.slice(1), root, INSTALL_TIMEOUT_MS, approver, tenant);
       return r.ok ? null : { check: 'install', message: `${pm.name} install 失败（${r.reason}）`, detail: clipOutput(r.output, 'both') };
     });
     if (!installed) return report;
 
     if (existsSync(path.join(root, 'tsconfig.json')) && existsSync(path.join(root, 'node_modules/.bin/tsc'))) {
       const typecheckOk = await record('typecheck', async () => {
-        const r = await this.exec('node_modules/.bin/tsc', ['--noEmit'], root, TSC_TIMEOUT_MS, approver);
+        const r = await this.exec('node_modules/.bin/tsc', ['--noEmit'], root, TSC_TIMEOUT_MS, approver, tenant);
         return r.ok ? null : { check: 'typecheck', message: `tsc --noEmit 未通过（${r.reason}）`, detail: clipOutput(r.output, 'head') };
       });
       if (!typecheckOk) return report;
@@ -200,7 +200,7 @@ export class CodegenGateService {
     const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf-8')) as { scripts?: Record<string, string> };
     if (pkg.scripts?.build) {
       await record('build', async () => {
-        const r = await this.exec(pm.name, ['run', 'build'], root, BUILD_TIMEOUT_MS, approver);
+        const r = await this.exec(pm.name, ['run', 'build'], root, BUILD_TIMEOUT_MS, approver, tenant);
         return r.ok ? null : { check: 'build', message: `${pm.name} run build 未通过（${r.reason}）`, detail: clipOutput(r.output, 'both') };
       });
     }
@@ -218,8 +218,8 @@ export class CodegenGateService {
     }
   }
 
-  private async exec(command: string, args: string[], cwd: string, timeoutMs: number, approver: Approver) {
-    const sbx = sandboxContext(cwd);
+  private async exec(command: string, args: string[], cwd: string, timeoutMs: number, approver: Approver, tenant?: string) {
+    const sbx = sandboxContext(cwd, {}, process.env, tenant);
     const r = await this.tools.execute('shell', { command, args, cwd, timeoutMs, maxOutputBytes: 256 * 1024 }, { workspace: cwd, approver, env: sbx.env, wrap: sbx.wrap });
     const reason = r.error ?? `退出码 ${r.exitCode ?? '未知'}`;
     return { ok: r.ok, output: r.output || r.error || '', reason };

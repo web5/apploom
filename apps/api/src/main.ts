@@ -3,6 +3,8 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { findSecretEnvNames, sandboxMode } from './sandbox/sandbox';
+import { PipelineService } from './pipeline/pipeline.service';
+import { createPreviewHandlers, previewConfig } from './preview/preview-proxy';
 import { corsOrigins } from './security/cors';
 
 /**
@@ -21,6 +23,14 @@ function warnLeakyStartupEnv(): void {
 async function bootstrap() {
   warnLeakyStartupEnv();
   const app = await NestFactory.create(AppModule);
+  // 预览反向代理必须挂在所有路由与守卫之前：它按 Host（<docId>.<PREVIEW_BASE_DOMAIN>）分流，其余请求原样放行
+  const preview = previewConfig();
+  if (preview) {
+    const handlers = createPreviewHandlers(preview, (id) => app.get(PipelineService).get(id));
+    app.use(handlers.middleware);
+    app.getHttpServer().on('upgrade', handlers.upgrade);
+    new Logger('Preview').log(`预览反向代理已启用：${preview.scheme}://<docId>.${preview.baseDomain}/`);
+  }
   app.enableCors({ origin: corsOrigins() });
   // Next.js dev 占用 3000，API 用 3001；Next 通过 rewrites 把 /api/* 代理过来
   await app.listen(process.env.PORT ?? 3001);

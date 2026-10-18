@@ -14,6 +14,7 @@ import type { LocalDeployService } from '../deploy/local-deploy.service';
 import { formatFailures, gateMaxRepairs, gateMode, type CodegenGateService } from '../gate/codegen-gate';
 import type { LlmService } from '../prd/llm.service';
 import { trimPrototypeForCodegen } from '../prd/prototype-digest';
+import { portOfLocalUrl, previewConfig, previewUrl } from '../preview/preview-proxy';
 import type { LlmLogEntry, PipelineDoc } from './pipeline.types';
 
 export interface StageRunResult {
@@ -61,6 +62,9 @@ export function upstreamInputs(stage: StageId, doc: PipelineDoc): UpstreamInputs
 
 type Handler = (deps: StageRunnerDeps, ctx: StageRunContext) => Promise<StageRunResult>;
 
+/** 多用户时把归属（租户）带给沙箱；没有归属就不传参，保持单用户调用形态不变 */
+const tenantOf = (ctx: StageRunContext): [string] | [] => (ctx.doc.ownerId ? [ctx.doc.ownerId] : []);
+
 const toResult = (r: AgentResult<unknown, unknown>, ctx: StageRunContext): StageRunResult => ({
   raw: r.raw,
   result: r.doc,
@@ -95,6 +99,7 @@ const prototypeStage: Handler = async (deps, ctx) => {
  */
 const codegenStage: Handler = async (deps, ctx) => {
   const { docId, onToken, logs, guard, repair: userRepair } = ctx;
+  const tenantArg = tenantOf(ctx);
 
   // 原型 → 代码生成这条边有 token 预算：超出时按 L1–L3 降级并显式告知模型。把等级记进摘要、并在流里提示，裁剪不再是看不见的
   const trim = trimPrototypeForCodegen(ctx.doc.stages.prototype.result, edgeBudget('codegen', 'prototype'));
@@ -111,7 +116,7 @@ const codegenStage: Handler = async (deps, ctx) => {
   const maxRepairs = gateMaxRepairs();
   for (let round = 0; ; round++) {
     onToken(`\n[gate] 第 ${round + 1} 轮校验…\n`);
-    const report = await deps.gate.verify(docId, r.doc as never, (line) => onToken(`${line}\n`));
+    const report = await deps.gate.verify(docId, r.doc as never, (line) => onToken(`${line}\n`), ...tenantArg);
     const gateSummary = { mode, passed: report.passed, repairRounds: round, checks: report.checks };
     const baseSummary = (r.summary ?? {}) as { warnings?: string[] };
 
@@ -145,6 +150,7 @@ const deployStage: Handler = async (deps, ctx) => {
     return { raw: '', error: '上游 codegen 产物为空，无法部署', errorClass: 'invalid_input' };
   }
 
+  const tenantArg = tenantOf(ctx);
   const r = await callAgent(deps, ctx);
   if (r.error) return { raw: r.raw, error: r.error, errorClass: r.errorClass, llmLogs: ctx.logs };
   const deploy = r.doc as { target: 'local' | 'cloud' | 'git'; url: string; repoUrl: string; buildLog: string; status: 'success' | 'failed'; port?: number } | undefined;
@@ -161,12 +167,16 @@ const deployStage: Handler = async (deps, ctx) => {
     };
   }
 
-  const out = await deps.deploy.deploy(ctx.docId, codegen, ctx.onToken, deploy.port);
-  const merged = { ...deploy, url: out.url, buildLog: out.buildLog, status: out.status };
+  const out = await deps.deploy.deploy(ctx.docId, codegen, ctx.onToken, deploy.port, ...tenantArg);
+  // 用真实结果覆盖 LLM 的占位值：port 取 dev server 实际监听的端口（反向代理按它转发）；配了预览域名时 url 换成代理地址
+  const realPort = out.url ? portOfLocalUrl(out.url) : null;
+  const preview = previewConfig();
+  const publicUrl = out.status === 'success' && realPort && preview ? previewUrl(ctx.docId, preview) : out.url;
+  const merged = { ...deploy, url: publicUrl, buildLog: out.buildLog, status: out.status, ...(realPort ? { port: realPort } : {}) };
   return {
     raw: out.buildLog,
     result: merged,
-    summary: { target: 'local', url: out.url, status: out.status, warnings: [] },
+    summary: { target: 'local', url: publicUrl, status: out.status, warnings: [] },
     llmLogs: ctx.logs,
   };
 };

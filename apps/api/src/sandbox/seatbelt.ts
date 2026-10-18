@@ -25,6 +25,8 @@ export interface SandboxPolicy {
   isolatedRoots?: string[];
   /** 禁止连接的端口（任意主机），用于基础设施：Redis / 数据库 / API */
   denyPorts?: number[];
+  /** 子进程环境变量（白名单后的）。Seatbelt 靠 spawn 的 env 传递，容器执行器需要显式 -e 带进容器 */
+  env?: Record<string, string>;
 }
 
 export interface WrappedCommand {

@@ -2,7 +2,7 @@ import { createDefaultRegistry } from '@apploom/tools';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { sandboxEnv } from './sandbox-env';
+import { sandboxEnv, sandboxHome, tenantDirName } from './sandbox-env';
 
 const fakeHome = mkdtempSync(path.join(tmpdir(), 'sbx-home-'));
 afterAll(() => rmSync(fakeHome, { recursive: true, force: true }));
@@ -75,5 +75,18 @@ describe('shell 工具：真实子进程', () => {
     expect(grandchild).toBeGreaterThan(1);
     await new Promise((res) => setTimeout(res, 200));
     expect(() => process.kill(grandchild, 0)).toThrow(); // ESRCH：已不存在
+  });
+});
+
+describe('租户隔离的 HOME', () => {
+  const env = { SANDBOX_HOME: '/tmp/apploom-sbx-tenant-test' } as NodeJS.ProcessEnv;
+
+  it('每个租户独立目录；不传租户用公共目录；名字里的路径字符不会逃出根目录，相近的名字不会撞目录', () => {
+    expect(sandboxHome(env)).toBe('/tmp/apploom-sbx-tenant-test');
+    const a = sandboxHome(env, 'alice');
+    expect(a.startsWith('/tmp/apploom-sbx-tenant-test/t-alice-')).toBe(true);
+    expect(sandboxHome(env, 'bob')).not.toBe(a);
+    expect(sandboxHome(env, '../../etc')).toMatch(/^\/tmp\/apploom-sbx-tenant-test\/t-[A-Za-z0-9_-]+$/);
+    expect(tenantDirName('a/b')).not.toBe(tenantDirName('a_b'));
   });
 });

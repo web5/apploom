@@ -6,6 +6,7 @@
  * HOME 指向一个空目录，使 ~/.npmrc（可能带 registry token）、~/.ssh 等不会被工具链自动读取
  * ——注意这只是不让它「顺手」读到，不是文件系统隔离（那需要 OS 级沙箱 / 容器）。
  */
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -30,8 +31,23 @@ const PASSTHROUGH = [
 ];
 
 /** 沙箱进程的 HOME：空目录，缓存（npm / pnpm / yarn）也落在这里 */
-export function sandboxHome(source: NodeJS.ProcessEnv = process.env): string {
+export function sandboxHomeBase(source: NodeJS.ProcessEnv = process.env): string {
   return source.SANDBOX_HOME ?? '/tmp/apploom-sandbox-home';
+}
+
+/** 租户名转成安全的目录名：保留字母数字与 _-，其余（含路径分隔符）换成 _，并附短摘要避免不同名字撞同一目录 */
+export function tenantDirName(tenant: string): string {
+  const safe = tenant.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
+  return `t-${safe}-${createHash('sha256').update(tenant).digest('hex').slice(0, 8)}`;
+}
+
+/**
+ * 沙箱进程的 HOME。多用户时每个租户一个目录（npm / pnpm 缓存各自独立，互相读不到、也无法投毒）；
+ * 不传 tenant 时用公共目录（单用户本机开发）。
+ */
+export function sandboxHome(source: NodeJS.ProcessEnv = process.env, tenant?: string): string {
+  const base = sandboxHomeBase(source);
+  return tenant ? path.join(base, tenantDirName(tenant)) : base;
 }
 
 /** 额外放行的变量名（逗号分隔），用于确实需要的场景（如私有源的 NPM_TOKEN）；放行即视为对其泄漏负责 */
@@ -46,13 +62,13 @@ function extraAllowed(source: NodeJS.ProcessEnv): string[] {
  * 构造子进程环境。source 默认取 process.env（测试可注入）；extra 是调用方指定的固定值
  * （如 BROWSER=none），优先级最高。
  */
-export function sandboxEnv(extra: Record<string, string> = {}, source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function sandboxEnv(extra: Record<string, string> = {}, source: NodeJS.ProcessEnv = process.env, tenant?: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of [...PASSTHROUGH, ...extraAllowed(source)]) {
     const v = source[name];
     if (v !== undefined) env[name] = v;
   }
-  const home = sandboxHome(source);
+  const home = sandboxHome(source, tenant);
   mkdirSync(home, { recursive: true });
   env.HOME = home;
   env.XDG_CACHE_HOME = path.join(home, '.cache');

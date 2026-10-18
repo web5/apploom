@@ -4,14 +4,16 @@
  * SANDBOX_MODE：
  *   auto（默认）  平台支持就启用（macOS: sandbox-exec），不支持则告警一次并退化为只做环境变量白名单
  *   seatbelt     必须启用，不可用时直接抛错（多用户 / 生产环境应使用强制模式，宁可不跑也不裸跑）
+ *   container    必须用容器（docker / podman，可配 gVisor）执行，引擎不可用时直接抛错；见 container.ts
  *   off          不做 OS 级隔离（仅环境变量白名单）
  */
 import { existsSync, realpathSync } from 'node:fs';
 import * as path from 'node:path';
-import { sandboxEnv, sandboxHome } from './sandbox-env';
+import { sandboxEnv, sandboxHome, sandboxHomeBase } from './sandbox-env';
+import { ContainerExecutor, containerOptions, isContainerAvailable } from './container';
 import { SeatbeltExecutor, type SandboxExecutor, type SandboxPolicy, type WrappedCommand } from './seatbelt';
 
-export type SandboxMode = 'auto' | 'seatbelt' | 'off';
+export type SandboxMode = 'auto' | 'seatbelt' | 'container' | 'off';
 
 export interface SandboxContext {
   /** 子进程环境变量（白名单） */
@@ -27,7 +29,7 @@ export const ISOLATED_ROOTS = ['/tmp/apploom-deploy', '/tmp/apploom-gate', '/tmp
 
 export function sandboxMode(env: NodeJS.ProcessEnv = process.env): SandboxMode {
   const v = (env.SANDBOX_MODE ?? 'auto').toLowerCase();
-  return v === 'seatbelt' || v === 'off' ? v : 'auto';
+  return v === 'seatbelt' || v === 'container' || v === 'off' ? v : 'auto';
 }
 
 let warnedUnavailable = false;
@@ -36,6 +38,11 @@ let warnedUnavailable = false;
 export function resolveExecutor(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): SandboxExecutor | null {
   const mode = sandboxMode(env);
   if (mode === 'off') return null;
+  if (mode === 'container') {
+    const opts = containerOptions(env);
+    if (!isContainerAvailable(opts.cli)) throw new Error(`SANDBOX_MODE=container 但 ${opts.cli} 引擎不可用。拒绝在没有隔离的情况下执行不可信代码`);
+    return new ContainerExecutor(opts);
+  }
   if (SeatbeltExecutor.isAvailable(platform)) return new SeatbeltExecutor();
   if (mode === 'seatbelt') throw new Error(`SANDBOX_MODE=seatbelt 但当前平台不支持（${platform}）。拒绝在没有隔离的情况下执行不可信代码`);
   if (!warnedUnavailable) {
@@ -83,25 +90,26 @@ function extraReadDirs(env: NodeJS.ProcessEnv): string[] {
   return (env.SANDBOX_READ_ALLOW ?? '').split(path.delimiter).map((s) => s.trim()).filter(Boolean);
 }
 
-export function buildPolicy(workspace: string, env: NodeJS.ProcessEnv = process.env): SandboxPolicy {
+export function buildPolicy(workspace: string, env: NodeJS.ProcessEnv = process.env, tenant?: string): SandboxPolicy {
   return {
     workspace,
-    writableDirs: [sandboxHome(env)],
+    writableDirs: [sandboxHome(env, tenant)],
     readableDirs: [...toolchainDirs(env.PATH), ...extraReadDirs(env)],
-    isolatedRoots: ISOLATED_ROOTS,
+    // 多租户时公共 HOME 根目录整体不可读（只放行自己租户那一份），其它租户的缓存与临时文件看不到
+    isolatedRoots: tenant ? [...ISOLATED_ROOTS, sandboxHomeBase(env)] : ISOLATED_ROOTS,
     denyPorts: infraPorts(env),
   };
 }
 
 /**
  * 为 workspace 里的一次执行准备沙箱上下文。
- * extraEnv：调用方的固定环境变量（如 BROWSER=none）。
+ * extraEnv：调用方的固定环境变量（如 BROWSER=none）。tenant：多用户时的租户（流水线 ownerId），决定独立的 HOME / 包管理器缓存。
  */
-export function sandboxContext(workspace: string, extraEnv: Record<string, string> = {}, env: NodeJS.ProcessEnv = process.env): SandboxContext {
-  const childEnv = sandboxEnv(extraEnv, env);
+export function sandboxContext(workspace: string, extraEnv: Record<string, string> = {}, env: NodeJS.ProcessEnv = process.env, tenant?: string): SandboxContext {
+  const childEnv = sandboxEnv(extraEnv, env, tenant);
   const executor = resolveExecutor(env);
   if (!executor) return { env: childEnv, executor: 'none' };
-  const policy = buildPolicy(workspace, env);
+  const policy = { ...buildPolicy(workspace, env, tenant), env: childEnv };
   return { env: childEnv, wrap: (cmd) => executor.wrap(policy, cmd), executor: executor.name };
 }
 
