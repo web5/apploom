@@ -134,6 +134,13 @@ export function StageCard({
             {repairOpen === stage && repairEntry(stage)}
           </div>
         )}
+        {st === 'stale' && (
+          <div className="stage-body">
+            <div className="confirm-box">
+              <span>↻ 上游已变更，以下是旧版本产物；轮到本阶段时会先比对它依据的上游，没变则沿用，变了才重新生成</span>
+            </div>
+          </div>
+        )}
         {st === 'done' && (
           <div className="stage-body">
             <div className="stage-actions">

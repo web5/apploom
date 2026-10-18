@@ -21,6 +21,7 @@ export const STUDIO_CSS = `
 .dot-running { background:#3b82f6; }
 .dot-error { background:#ef4444; }
 .dot-waiting_confirm { background:#f59e0b; }
+.dot-stale { background:#f59e0b; }
 .layout { flex:1; display:flex; overflow:hidden; }
 .main { flex:1; overflow-y:auto; padding:24px; display:flex; flex-direction:column; gap:16px; max-width:680px; }
 .input-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:10px; }
@@ -74,6 +75,7 @@ export const STUDIO_CSS = `
 .stage-running { border-color:#3b82f6; box-shadow:0 0 0 3px #eff6ff; }
 .stage-done { border-color:#10b981; }
 .stage-error { border-color:#ef4444; }
+.stage-stale { border-color:#f59e0b; border-style:dashed; background:#fffdf7; }
 .stage-waiting_confirm { border-color:#f59e0b; box-shadow:0 0 0 3px #fef3c7; }
 .stage-head { display:flex; align-items:center; gap:10px; }
 .stage-num { width:24px; height:24px; border-radius:50%; background:#f0f1f3; color:#6b7280; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; }
@@ -81,6 +83,7 @@ export const STUDIO_CSS = `
 .stage-done .stage-num { background:#10b981; color:#fff; }
 .stage-error .stage-num { background:#ef4444; color:#fff; }
 .stage-waiting_confirm .stage-num { background:#f59e0b; color:#fff; }
+.stage-stale .stage-num { background:#f59e0b; color:#fff; }
 .stage-title { font-weight:600; font-size:14px; flex:1; }
 .badge { font-size:11px; padding:2px 8px; border-radius:999px; }
 .badge-pending { background:#f0f1f3; color:#6b7280; }
@@ -88,6 +91,7 @@ export const STUDIO_CSS = `
 .badge-done { background:#ecfdf5; color:#10b981; }
 .badge-error { background:#fef2f2; color:#ef4444; }
 .badge-waiting_confirm { background:#fef3c7; color:#f59e0b; }
+.badge-stale { background:#fef3c7; color:#b45309; }
 .stage-body { margin-top:10px; display:flex; flex-direction:column; gap:10px; }
 .confirm-box { display:flex; align-items:center; justify-content:space-between; gap:10px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 12px; font-size:12px; color:#92400e; }
 .fail-box { background:#fef2f2; border-color:#fca5a5; color:#991b1b; }
