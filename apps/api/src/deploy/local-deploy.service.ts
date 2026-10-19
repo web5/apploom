@@ -119,7 +119,7 @@ export async function freePort(
   onLog: (line: string) => void,
   askApproval: (summary: string) => Promise<ApprovalDecision>,
 ): Promise<string | null> {
-  const pids = (await capture('lsof', ['-ti', `:${port}`])).trim().split('\n').filter(Boolean);
+  const pids = (await capture('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'])).trim().split('\n').filter(Boolean);
   if (pids.length === 0) {
     onLog(`[port] ${port} 空闲`);
     return null;

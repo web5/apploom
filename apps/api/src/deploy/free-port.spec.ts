@@ -51,4 +51,19 @@ describe('freePort：多用户下只终止自己这条流水线的旧 dev server
     expect(approve).not.toHaveBeenCalled();
     expect(logs.join('\n')).toContain('另一条流水线');
   }, 20000);
+
+  it('只看监听该端口的进程：连着这个端口的客户端（如浏览器）不是占用者，不会被当成要终止的对象或触发审批', async () => {
+    const port = await pickPort();
+    const listener = await listenerIn(docA, port);
+    procs.push(listener);
+    const client = spawn(process.execPath, ['-e', `require('net').connect(${port},'127.0.0.1');setInterval(()=>{},1000)`], { cwd: '/tmp', stdio: 'ignore' });
+    procs.push(client);
+    await new Promise((r) => setTimeout(r, 500));
+    const approve = jest.fn(async () => 'rejected' as const);
+    expect(await freePort(port, docA, () => undefined, approve)).toBeNull();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(alive(listener)).toBe(false);
+    expect(alive(client)).toBe(true);
+    expect(approve).not.toHaveBeenCalled();
+  }, 20000);
 });
