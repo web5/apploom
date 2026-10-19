@@ -66,6 +66,26 @@ function packageName(spec: string): string {
 }
 
 /** L1：纯函数结构校验 */
+/** Prisma 的 generator / datasource / model / enum 块不支持单行写法（实测 prisma validate 直接报错），而模型常常照着单行示例写 */
+const PRISMA_ONE_LINE_BLOCK = /^\s*(generator|datasource|model|enum|view|type)\s+(\w+)\s*\{.*\}\s*$/;
+
+export function checkPrismaSchemas(codegen: CodegenInput): GateFailure[] {
+  const failures: GateFailure[] = [];
+  for (const f of codegen.files) {
+    if (!f.path.trim().endsWith('.prisma')) continue;
+    f.content.split('\n').forEach((line, i) => {
+      const m = line.match(PRISMA_ONE_LINE_BLOCK);
+      if (m) {
+        failures.push({
+          check: 'structure',
+          message: `${f.path} 第 ${i + 1} 行：Prisma 不支持单行块（${m[1]} ${m[2]}）。generator / datasource / model / enum 必须多行书写——左花括号后换行，每个属性或字段独占一行，右花括号单独一行`,
+        });
+      }
+    });
+  }
+  return failures;
+}
+
 export function checkStructure(codegen: CodegenInput): GateFailure[] {
   const failures: GateFailure[] = [];
   const fail = (message: string) => failures.push({ check: 'structure', message });
@@ -87,7 +107,17 @@ export function checkStructure(codegen: CodegenInput): GateFailure[] {
     if (!f.content.trim()) fail(`文件内容为空: ${f.path}`);
   }
 
+  failures.push(...checkPrismaSchemas(codegen));
+
   const pkgFile = codegen.files.find((f) => f.path.trim() === 'package.json');
+  const nestedPkgs = codegen.files.filter((f) => /(^|\/)package\.json$/.test(f.path.trim()) && f.path.trim() !== 'package.json');
+  // 门禁（install / tsc / build）与部署都只在项目根目录执行。没有根 package.json 却有子包 / 用 npm 启动，会被当成「纯静态产物」跳过全部校验，
+  // 到部署阶段才报 ENOENT（真实案例：前后端分到 frontend/ backend/ 两个子目录，根目录没有 package.json）
+  if (!pkgFile && (nestedPkgs.length > 0 || /^(npm|pnpm|yarn)\b/.test(codegen.runCommand.trim()))) {
+    fail(
+      `缺少根目录的 package.json：runCommand 为 "${codegen.runCommand}"${nestedPkgs.length ? `，且 ${nestedPkgs.map((f) => f.path).join('、')} 在子目录里` : ''}。依赖安装、类型检查、构建和启动都只在项目根目录执行，请在根目录提供 package.json（前后端分目录时用 "workspaces" 或在根 scripts 里串起各子项目），不要只把 package.json 放在子目录`,
+    );
+  }
   if (pkgFile) {
     let pkg: { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     try {
@@ -99,7 +129,22 @@ export function checkStructure(codegen: CodegenInput): GateFailure[] {
 
     const declared = { ...pkg.dependencies, ...pkg.devDependencies };
     const missing = codegen.dependencies.map(packageName).filter((n) => !(n in declared));
-    if (missing.length > 0) fail(`dependencies 声明了但 package.json 中不存在: ${missing.join(', ')}`);
+    if (missing.length > 0) {
+      const inNested = new Set<string>();
+      for (const n of nestedPkgs) {
+        try {
+          const np = JSON.parse(n.content) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+          for (const name of Object.keys({ ...np.dependencies, ...np.devDependencies })) inNested.add(name);
+        } catch {
+          // 子包 JSON 坏了会在别处暴露，这里只是为了给出更准的提示
+        }
+      }
+      const elsewhere = missing.filter((m) => inNested.has(m));
+      fail(
+        `dependencies 声明了但根 package.json 中不存在: ${missing.join(', ')}` +
+          (elsewhere.length ? `。其中 ${elsewhere.join(', ')} 只写在子目录的 package.json 里——门禁与部署只在根目录 install，请合并进根 package.json 的 dependencies / devDependencies（或用 workspaces）` : '。请补进根 package.json，或从 dependencies 列表里删掉'),
+      );
+    }
 
     const m = codegen.runCommand.trim().match(/^(?:npm|pnpm|yarn)\s+(?:run\s+)?([\w:.-]+)$/);
     if (m && m[1] !== 'start' && !pkg.scripts?.[m[1]]) {
@@ -137,6 +182,44 @@ export function clipOutput(text: string, mode: 'head' | 'tail' | 'both'): string
   const headLen = Math.floor(DETAIL_LIMIT * 0.4);
   const tailLen = DETAIL_LIMIT - headLen;
   return `${t.slice(0, headLen)}\n…（中间省略 ${t.length - DETAIL_LIMIT} 字符）…\n${t.slice(-tailLen)}`;
+}
+
+const TSC_ERROR = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$/;
+const DECORATOR_CODES = new Set(['TS1241', 'TS1206', 'TS1270', 'TS1219', 'TS1240', 'TS1239']);
+
+/**
+ * tsc 失败的回喂详情：按错误码归并（同一个根因常刷出几十行）并附上常见根因的提示。
+ * 真实案例：NestJS 装饰器在没开 experimentalDecorators 的根 tsconfig 下报了 40 多行，原始输出截断后模型看不到根因，修了 2 轮都没改对。
+ */
+export function summarizeTscOutput(output: string): string {
+  const groups = new Map<string, { count: number; files: Set<string>; sample: string }>();
+  for (const line of output.split('\n')) {
+    const m = line.match(TSC_ERROR);
+    if (!m) continue;
+    const g = groups.get(m[4]) ?? { count: 0, files: new Set<string>(), sample: m[5].trim() };
+    g.count++;
+    g.files.add(m[1]);
+    groups.set(m[4], g);
+  }
+  const raw = clipOutput(output, 'head').slice(0, 2000);
+  if (groups.size === 0) return raw;
+
+  const total = [...groups.values()].reduce((n, g) => n + g.count, 0);
+  const lines = [...groups.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 8)
+    .map(([code, g]) => `  ${code} ×${g.count}（${[...g.files].slice(0, 3).join('、')}${g.files.size > 3 ? ` 等 ${g.files.size} 个文件` : ''}）：${g.sample.slice(0, 160)}`);
+
+  const hints: string[] = [];
+  if ([...groups.keys()].some((c) => DECORATOR_CODES.has(c))) {
+    hints.push(
+      '装饰器相关错误通常是 tsconfig.json 没开 "experimentalDecorators": true（NestJS / TypeORM 还需要 "emitDecoratorMetadata": true）。注意 tsc --noEmit 用的是「项目根」tsconfig.json：即使 server/ 等子目录有自己的 tsconfig，根配置的 include 仍会把它们编进来——要么在根配置里开启这两项，要么在根配置的 exclude 里排除该子目录',
+    );
+  }
+  if (groups.has('TS2307')) {
+    hints.push('「找不到模块」：确认该依赖写进了「根」package.json（门禁只在项目根目录执行 install，子目录 package.json 里的依赖不会被安装）');
+  }
+  return [`错误汇总（共 ${total} 条，按错误码归并）：`, ...lines, ...(hints.length ? ['可能的根因：', ...hints.map((h) => `  - ${h}`)] : []), '原始输出（节选）：', raw].join('\n');
 }
 
 @Injectable()
@@ -192,7 +275,7 @@ export class CodegenGateService {
     if (existsSync(path.join(root, 'tsconfig.json')) && existsSync(path.join(root, 'node_modules/.bin/tsc'))) {
       const typecheckOk = await record('typecheck', async () => {
         const r = await this.exec('node_modules/.bin/tsc', ['--noEmit'], root, TSC_TIMEOUT_MS, approver, tenant);
-        return r.ok ? null : { check: 'typecheck', message: `tsc --noEmit 未通过（${r.reason}）`, detail: clipOutput(r.output, 'head') };
+        return r.ok ? null : { check: 'typecheck', message: `tsc --noEmit 未通过（${r.reason}）`, detail: summarizeTscOutput(r.output) };
       });
       if (!typecheckOk) return report;
     }

@@ -35,6 +35,7 @@ export const CODEGEN_SYSTEM_PROMPT = `# 角色
 - 对于重复性页面（如 CRUD 列表），只生成 1 个示例组件，其余在 notes 中说明
 - 每个 file 的 content 必须是完整可用的文件内容，不要省略 import 语句
 - 使用 Vite + TypeScript 时，必须生成 src/vite-env.d.ts（内容为 /// <reference types="vite/client" />），否则导入 *.module.css 或图片等资源会在类型检查中报 TS2307
+- Prisma schema 的 generator / datasource / model / enum 块必须多行书写：左花括号后换行，每个属性或字段独占一行（单行写法 prisma 直接报错）
 - 文件路径用正斜杠 / 分隔（跨平台兼容）
 - pageTree 中的核心页面生成组件，次要页面可合并到 notes 说明
 - dataModels 合并到一个 types.ts 或 schema 文件中
@@ -47,7 +48,7 @@ export const CODEGEN_SYSTEM_PROMPT = `# 角色
     { "path": "package.json", "content": "{ \\"name\\": \\"team-todo\\", \\"scripts\\": { \\"dev\\": \\"next dev\\" }, \\"dependencies\\": { \\"next\\": \\"^14.0.0\\", \\"react\\": \\"^18.0.0\\" } }" },
     { "path": "src/app/page.tsx", "content": "export default function BoardPage() { return <div>看板视图</div>; }" },
     { "path": "src/app/tasks/[id]/page.tsx", "content": "export default function TaskDetailPage({ params }) { return <div>任务 {params.id}</div>; }" },
-    { "path": "prisma/schema.prisma", "content": "model Task { id String @id @default(uuid()) title String status String ownerId String dueDate DateTime? }" }
+    { "path": "prisma/schema.prisma", "content": "generator client {\\n  provider = \\"prisma-client-js\\"\\n}\\n\\ndatasource db {\\n  provider = \\"postgresql\\"\\n  url      = env(\\"DATABASE_URL\\")\\n}\\n\\nmodel Task {\\n  id       String    @id @default(uuid())\\n  title    String\\n  status   String\\n  ownerId  String\\n  dueDate  DateTime?\\n}" }
   ],
   "dependencies": ["next@^14.0.0", "react@^18.0.0", "prisma@^5.0.0", "@prisma/client@^5.0.0"],
   "runCommand": "npm run dev",

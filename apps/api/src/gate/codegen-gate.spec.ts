@@ -1,4 +1,4 @@
-import { checkStructure, clipOutput, formatFailures, CodegenInput } from './codegen-gate';
+import { checkStructure, clipOutput, formatFailures, summarizeTscOutput, CodegenInput } from './codegen-gate';
 
 const pkg = (extra: object = {}) =>
   JSON.stringify({ scripts: { dev: 'vite', build: 'vite build' }, dependencies: { react: '^18' }, devDependencies: { vite: '^5' }, ...extra });
@@ -123,5 +123,77 @@ describe('clipOutput', () => {
     expect(out).toContain('Build failed with 1 error');
     expect(out).toMatch(/中间省略 \d+ 字符/);
     expect(out.length).toBeLessThan(4200);
+  });
+});
+
+describe('checkStructure · Prisma 单行块', () => {
+  const withSchema = (content: string) => base({ files: [...base().files, { path: 'prisma/schema.prisma', content }] });
+
+  it('拦下真实失败案例里的写法（generator / datasource 写成单行），并指出行号和块名', () => {
+    const bad = 'generator client { provider = "prisma-client-js" }\ndatasource db { provider = "postgresql" url = env("DATABASE_URL") }\n\nmodel User {\n  id String @id\n}\n';
+    const msgs = checkStructure(withSchema(bad)).map((f) => f.message);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]).toContain('prisma/schema.prisma 第 1 行');
+    expect(msgs[0]).toContain('generator client');
+    expect(msgs[1]).toContain('第 2 行');
+    expect(msgs[1]).toContain('datasource db');
+  });
+
+  it('单行 model 也拦（prisma validate 实测同样报错）；多行写法与普通 TS 文件不受影响', () => {
+    expect(checkStructure(withSchema('model A { id String @id }\n'))).toHaveLength(1);
+    const good = 'generator client {\n  provider = "prisma-client-js"\n}\n\ndatasource db {\n  provider = "postgresql"\n  url      = env("DATABASE_URL")\n}\n\nmodel A {\n  id String @id\n}\n';
+    expect(checkStructure(withSchema(good))).toEqual([]);
+    expect(checkStructure(base({ files: [...base().files, { path: 'src/x.ts', content: 'model A { id }' }] }))).toEqual([]);
+  });
+});
+
+describe('summarizeTscOutput', () => {
+  const nestErrors = [
+    'server/src/tasks/tasks.controller.ts(8,3): error TS1241: Unable to resolve signature of method decorator when called as an expression.',
+    '  The runtime will invoke the decorator with 2 arguments, but the decorator expects 3.',
+    'server/src/tasks/tasks.controller.ts(9,11): error TS1206: Decorators are not valid here.',
+    'server/src/users/users.controller.ts(8,3): error TS1241: Unable to resolve signature of method decorator when called as an expression.',
+    'server/src/app.module.ts(4,2): error TS1241: Unable to resolve signature of method decorator when called as an expression.',
+    'server/src/main.ts(1,1): error TS1241: Unable to resolve signature of method decorator when called as an expression.',
+  ].join('\n');
+
+  it('同一错误码归并计数，并给出装饰器根因提示（根 tsconfig 才是 tsc --noEmit 用的）', () => {
+    const out = summarizeTscOutput(nestErrors);
+    expect(out).toContain('共 5 条');
+    expect(out).toMatch(/TS1241 ×4（.*等 4 个文件）/);
+    expect(out).toContain('experimentalDecorators');
+    expect(out).toContain('根」tsconfig.json');
+    expect(out).toContain('原始输出（节选）');
+  });
+
+  it('TS2307 提示依赖要写进根 package.json；没有可解析的错误行时退回原始输出', () => {
+    expect(summarizeTscOutput("src/a.ts(1,8): error TS2307: Cannot find module 'zustand'.")).toContain('根」package.json');
+    expect(summarizeTscOutput('error: something else entirely')).toBe('error: something else entirely');
+  });
+});
+
+describe('checkStructure · 项目根目录', () => {
+  it('没有根 package.json 但有子包 / 用 npm 启动：直接拦下（否则会被当成静态产物跳过全部校验）', () => {
+    const files = [{ path: 'frontend/package.json', content: pkg() }, { path: 'backend/package.json', content: pkg() }];
+    const f = checkStructure(base({ files, runCommand: 'npm run dev' }));
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain('缺少根目录的 package.json');
+    expect(f[0].message).toContain('frontend/package.json');
+    expect(checkStructure(base({ files: [{ path: 'src/a.ts', content: 'x' }], runCommand: 'npm start' }))).toHaveLength(1);
+  });
+
+  it('真正的静态产物（无 package.json、不用 npm 启动）照旧放行', () => {
+    expect(checkStructure(base({ files: [{ path: 'index.html', content: '<html></html>' }], dependencies: [], runCommand: 'python3 -m http.server 8080' }))).toEqual([]);
+  });
+
+  it('依赖只写在子目录 package.json：指出这一点；完全没写则提示补进根或删除', () => {
+    const files = [
+      { path: 'package.json', content: pkg() },
+      { path: 'server/package.json', content: JSON.stringify({ dependencies: { '@nestjs/core': '^10' } }) },
+    ];
+    const msg = checkStructure(base({ files, dependencies: ['react@^18', '@nestjs/core@^10', 'rxjs@^7'] }))[0].message;
+    expect(msg).toContain('@nestjs/core 只写在子目录的 package.json');
+    expect(msg).toContain('rxjs');
+    expect(checkStructure(base({ dependencies: ['react@^18', 'ghost@1'] }))[0].message).toContain('从 dependencies 列表里删掉');
   });
 });
