@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AppLoom 学习清单</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+/* 布局：单栏阅读文档，清单条目为「勾选框 + 正文」两列网格，Eval 一节为对照表与流程 */
+:root {
+  --bg: #f6f8f9;
+  --surface: #ffffff;
+  --fg: #16232b;
+  --muted: #5a6b75;
+  --line: #d9e1e5;
+  --accent: #0b6e6e;
+  --accent-soft: #dff1ef;
+  --warn: #9a5b00;
+  --warn-soft: #fbefd9;
+  --code-bg: #eaf0f2;
+  --font-body: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f181d; --surface: #16232a; --fg: #e3ecef; --muted: #93a6af; --line: #28393f;
+    --accent: #55c2bb; --accent-soft: #15343a; --warn: #e8b35e; --warn-soft: #3a2d14; --code-bg: #1d2e35;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f181d; --surface: #16232a; --fg: #e3ecef; --muted: #93a6af; --line: #28393f;
+  --accent: #55c2bb; --accent-soft: #15343a; --warn: #e8b35e; --warn-soft: #3a2d14; --code-bg: #1d2e35;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.7;
+  padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.35; margin: 0; }
+h1 { font-size: 28px; font-weight: 700; }
+h2 { font-size: 20px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 700; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.lede { color: var(--muted); max-width: 65ch; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-weight: 500; font-family: var(--font-mono); }
+
+header { display: flex; flex-direction: column; gap: 14px; }
+.progress { display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.progress-label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+.reset { align-self: flex-start; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+.reset:hover { color: var(--fg); border-color: var(--muted); }
+
+section { display: flex; flex-direction: column; gap: 14px; }
+.sec-head { display: flex; flex-direction: column; gap: 4px; }
+.sec-head p { color: var(--muted); }
+
+.list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.item { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 14px 16px; cursor: pointer; }
+.item + .item { border-top: 1px solid var(--line); }
+.item input { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--accent); cursor: pointer; }
+.item input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.item:has(input:checked) .title { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.item .body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.title { font-weight: 500; }
+.where { display: flex; flex-wrap: wrap; gap: 6px; }
+.why { color: var(--muted); font-size: 14px; }
+.step-no { font-family: var(--font-mono); font-size: 12px; color: var(--accent); margin-right: 6px; }
+
+.callout { border-radius: 8px; padding: 14px 16px; background: var(--accent-soft); display: flex; flex-direction: column; gap: 4px; }
+.callout.warn { background: var(--warn-soft); }
+.callout strong { font-weight: 700; }
+
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; vertical-align: top; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 500; white-space: nowrap; }
+
+.flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; counter-reset: s; }
+.flow li { counter-increment: s; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+.flow li::before { content: counter(s); font-family: var(--font-mono); font-size: 12px; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-top: 2px; }
+.flow b { font-weight: 500; }
+.flow span { color: var(--muted); }
+ul.plain { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+ul.plain li::marker { color: var(--accent); }
+pre { margin: 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; background: var(--code-bg); border-radius: 8px; padding: 14px 16px; overflow-x: auto; }
+footer { color: var(--muted); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="eyebrow">AppLoom · 学习笔记 · 2026-10-19</span>
+    <h1>用 AppLoom 学 AI Agent 开发：高级工程师视角的学习清单</h1>
+    <p class="lede">AppLoom 是一条固定阶段的 LLM 流水线 harness（需求 → 原型 → 架构 → 代码生成 → 部署），不是自由规划的 ReAct 式 Agent。它最适合学「把 LLM 当作不可靠组件来做工程化」，这部分与后端和分布式经验高度重合。勾选状态保存在你的浏览器里。</p>
+    <div class="progress" aria-live="polite">
+      <div class="progress-label"><span>学习进度</span><span id="pcount">0 / 0</span></div>
+      <div class="bar"><i id="pbar"></i></div>
+    </div>
+    <button class="reset" id="reset" type="button">清空勾选</button>
+  </header>
+
+  <section id="s1">
+    <div class="sec-head">
+      <h2>一、可以马上理解的</h2>
+      <p>后端与分布式经验可直接迁移，读代码加看对应测试即可掌握。</p>
+    </div>
+    <div class="list">
+      <label class="item"><input type="checkbox" id="a1"><span class="body"><span class="title">结构化输出、schema 校验与失败分类</span><span class="where"><code>agent/agent-runner.ts</code><code>output.ts</code><code>repair.ts</code><code>packages/shared/src/schemas</code></span><span class="why">本质是 RPC 响应反序列化加错误分类。重点看截断（truncated）、非法输出（invalid_output）、预算三类失败如何区别处理。</span></span></label>
+      <label class="item"><input type="checkbox" id="a2"><span class="body"><span class="title">声明式 Agent 定义（AgentSpec）</span><span class="where"><code>agent/agent-specs.ts</code></span><span class="why">五个阶段只差 schema、prompt、上游渲染、摘要四项，是策略模式加依赖注入，<code>chatFn</code> 可替换为假模型。</span></span></label>
+      <label class="item"><input type="checkbox" id="a3"><span class="body"><span class="title">DAG 编排与单一事实源</span><span class="where"><code>packages/shared/src/graph.ts</code>（STAGE_GRAPH）</span><span class="why">工作流引擎的最小版本，温度等参数也从这里取。</span></span></label>
+      <label class="item"><input type="checkbox" id="a4"><span class="body"><span class="title">产物指纹与 stale 级联失效</span><span class="where"><code>pipeline/fingerprint.ts</code><code>pipeline/invalidate.ts</code></span><span class="why">与构建系统（Bazel、Make）的增量缓存同构：内容寻址，上游变化则下游失效。</span></span></label>
+      <label class="item"><input type="checkbox" id="a5"><span class="body"><span class="title">Token 预算与成本控制</span><span class="where"><code>trace/budget.ts</code></span><span class="why">配额与熔断思路。超限抛 budget 错误，不重试、不自动修复。</span></span></label>
+      <label class="item"><input type="checkbox" id="a6"><span class="body"><span class="title">可观测性（trace 与调用日志）</span><span class="where"><code>trace/</code><code>packages/llm/src/gateway.ts</code></span><span class="why">对应分布式 tracing，区别是多了 token 用量维度。</span></span></label>
+      <label class="item"><input type="checkbox" id="a7"><span class="body"><span class="title">幂等、存储抽象、事件总线</span><span class="where"><code>pipeline/pipeline.store.ts</code><code>pipeline.bus.ts</code><code>*.idempotency.spec.ts</code></span><span class="why">纯后端工程。Postgres 与 Redis 双后端，Redis 实现保留为可选。</span></span></label>
+      <label class="item"><input type="checkbox" id="a8"><span class="body"><span class="title">多租户隔离、鉴权、限流</span><span class="where"><code>security/</code><code>sandbox/</code></span><span class="why">流水线按 API Key 归属隔离，沙箱 HOME 与端口按租户划分。</span></span></label>
+      <label class="item"><input type="checkbox" id="a9"><span class="body"><span class="title">用假模型做确定性单测</span><span class="where"><code>agent/fake-model.ts</code><code>agent-runner.spec.ts</code></span><span class="why">把非确定性组件隔离出去，与你熟悉的测试替身思路一致。</span></span></label>
+    </div>
+  </section>
+
+  <section id="s2">
+    <div class="sec-head">
+      <h2>二、需要花时间，但这个项目是好教材</h2>
+      <p>读懂不难，建立手感需要亲手跑和改。</p>
+    </div>
+    <div class="list">
+      <label class="item"><input type="checkbox" id="b1"><span class="body"><span class="title">Eval 驱动开发</span><span class="where"><code>apps/api/eval/</code><code>src/eval/metrics.ts</code></span><span class="why">LLM 工程与传统工程差别最大的地方。实际跑几次评测、改一次 prompt 看分数变化，才能理解为什么单测全绿不代表没有回退。详见第四节。</span></span></label>
+      <label class="item"><input type="checkbox" id="b2"><span class="body"><span class="title">Prompt 作为代码资产</span><span class="where"><code>packages/shared/src/prompts/</code></span><span class="why">读懂容易，写好很难，要靠评测迭代积累。注意：该目录未经用户同意不得改动。</span></span></label>
+      <label class="item"><input type="checkbox" id="b3"><span class="body"><span class="title">门禁回喂（gate → 修复循环）</span><span class="where"><code>gate/codegen-gate.ts</code></span><span class="why">项目里最接近 Agent 循环的部分：生成、验证、把错误喂回模型、重试。重点理解终止条件与预算如何配合。</span></span></label>
+      <label class="item"><input type="checkbox" id="b4"><span class="body"><span class="title">沙箱执行 AI 生成的代码</span><span class="where"><code>sandbox/seatbelt.ts</code><code>sandbox/container.ts</code></span><span class="why">macOS seatbelt 与容器两种执行器，值得细读其安全模型。</span></span></label>
+      <label class="item"><input type="checkbox" id="b5"><span class="body"><span class="title">人工审批策略</span><span class="where"><code>approval/policy.ts</code></span><span class="why">human-in-the-loop 的落地形态。</span></span></label>
+    </div>
+  </section>
+
+  <section id="s3">
+    <div class="sec-head">
+      <h2>三、这个项目学不到的</h2>
+      <p>按通用的 Agent 定义，下面几项需要另找材料补齐。</p>
+    </div>
+    <div class="list">
+      <label class="item"><input type="checkbox" id="c1"><span class="body"><span class="title">自主工具调用循环</span><span class="why">ReAct 与 function calling 多轮，由模型自己决定下一步。<code>packages/tools/</code> 有工具注册雏形，但主流程不由它驱动。</span></span></label>
+      <label class="item"><input type="checkbox" id="c2"><span class="body"><span class="title">记忆与上下文管理</span><span class="why">长对话压缩、检索、向量库与 RAG。</span></span></label>
+      <label class="item"><input type="checkbox" id="c3"><span class="body"><span class="title">多 Agent 协作</span><span class="why">规划者与执行者分工、子 Agent 并行、结果汇总。</span></span></label>
+      <label class="item"><input type="checkbox" id="c4"><span class="body"><span class="title">MCP 等工具协议与流式 tool-call 解析</span><span class="why">协议层与流式解析，项目里没有覆盖。</span></span></label>
+    </div>
+  </section>
+
+  <section id="s4">
+    <div class="sec-head">
+      <h2>四、Eval 驱动开发</h2>
+      <p>LLM 应用领域的「测试驱动开发」：先定义「怎样算好」的一组可重复评测，之后每次改 prompt、模型或 harness，都用数字判断变好还是变差。</p>
+    </div>
+
+    <h3>为什么单测不够用</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th></th><th>传统单测</th><th>LLM 评测</th></tr></thead>
+        <tbody>
+          <tr><td>被测对象</td><td>确定性函数</td><td>概率性模型，同样输入可能不同输出</td></tr>
+          <tr><td>判定</td><td>断言相等，通过或失败</td><td>统计指标：通过率、一次通过率、成本</td></tr>
+          <tr><td>回退风险</td><td>改坏了会红</td><td>改坏了单测仍全绿（单测用假模型），只有真模型才暴露</td></tr>
+          <tr><td>一次结果</td><td>可信</td><td>要看多用例的整体趋势，单次可能是噪声</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="why">例：改了一句 prompt，所有 jest 都绿，但真模型生成代码的构建通过率可能从 4/4 掉到 2/4。只有评测能发现。</p>
+
+    <h3>在本项目里的闭环</h3>
+    <ol class="flow">
+      <li><div><b>固定用例集</b> <code>eval/cases.ts</code><br><span>4 个典型需求（计数器、待办、书签、静态落地页），由易到难，覆盖有与无 package.json 两条路径。技术栈写死以降低方差。用例 id 不能改，基线按 id 对应。</span></div></li>
+      <li><div><b>真实跑流水线</b> <code>eval/run-eval.ts</code><br><span>真模型、真门禁（install、typecheck、build），跑到 codegen 为止，不部署。</span></div></li>
+      <li><div><b>指标汇总</b> <code>src/eval/metrics.ts</code><br><span>通过率、一次通过率（无需修复循环即成功）、平均 token、耗时、自动修复次数、门禁修复轮数。</span></div></li>
+      <li><div><b>与基线对比</b> <code>eval/baselines/*.json</code><br><span>当前结果对比已保存的基线，找出回退。历史结果在 <code>eval/results/</code>，是改动的数字档案。</span></div></li>
+      <li><div><b>门槛写进工作约定</b> <code>CLAUDE.md</code><br><span>改动触及模型调用路径时，<code>pnpm eval</code> 无回退才能提交。</span></div></li>
+    </ol>
+
+    <h3>值得学的设计细节</h3>
+    <ul class="plain">
+      <li><b>区分环境失败与质量失败。</b>额度用完、鉴权、网络、模型不存在这几类错误标记为 <code>inconclusive</code>，不计入通过率，避免一次 402 被误判成代码变差。</li>
+      <li><b>多个指标一起看。</b>通过率没变但 token 翻倍，或一次通过率下降，也是回退：修复循环兜住了质量，成本却上去了。</li>
+      <li><b>有预算上限。</b><code>EVAL_TOTAL_TOKEN_CAP</code> 限制整次评测的 token，超出后剩余用例跳过。</li>
+      <li><b>隔离。</b>评测用独立队列 <code>apploom-eval</code>，不与开发 API 抢任务。</li>
+    </ul>
+
+    <h3>典型工作流</h3>
+    <pre>发现问题（某类需求总失败）
+  → 把它加成一个评测用例（先让评测变红）
+  → 改 prompt / harness
+  → 跑评测对比基线
+  → 目标用例转绿，且其他用例无回退
+  → 更新基线，提交</pre>
+    <p class="why">与 TDD 的红、绿、重构同构，区别是「绿」的定义变成统计意义上的不回退，而不是单次断言通过。</p>
+
+    <div class="callout warn">
+      <strong>局限</strong>
+      <ul class="plain">
+        <li>用例太少会有方差：4 个用例里一个抖动就是 25% 的波动，必要时同一用例重复跑多次。</li>
+        <li>只测得到你想到的场景：评测集会过拟合，要把线上真实失败案例持续回灌。</li>
+        <li>判定方式分层：本项目用「能否构建通过」这种客观判定，成本最低最可靠；文案质量等无法客观判定的场景才需要 LLM-as-judge 或人工打分，可靠性明显更差。</li>
+        <li>每次都花钱：所以便宜的单测每次跑，评测只在改动模型路径时跑。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="s5">
+    <div class="sec-head">
+      <h2>五、建议的学习顺序</h2>
+      <p>这里的先后顺序有意义，前一步是后一步的前提。</p>
+    </div>
+    <div class="list">
+      <label class="item"><input type="checkbox" id="d1"><span class="body"><span class="title"><span class="step-no">1</span>读 <code>graph.ts</code> → <code>agent-specs.ts</code> → <code>agent-runner.ts</code></span><span class="why">理解一次阶段调用的完整生命周期。约半天。</span></span></label>
+      <label class="item"><input type="checkbox" id="d2"><span class="body"><span class="title"><span class="step-no">2</span>看 <code>fingerprint.ts</code> 与 <code>invalidate.ts</code> 的测试</span><span class="why">理解增量失效。约 1 至 2 小时。</span></span></label>
+      <label class="item"><input type="checkbox" id="d3"><span class="body"><span class="title"><span class="step-no">3</span>跑一次 <code>pnpm eval -- --cases counter</code>，再故意改一个 prompt 跑对比</span><span class="why">建立 eval 的直觉。需要会话环境里有模型密钥 <code>TOKENHUB_API_KEY</code>。</span></span></label>
+      <label class="item"><input type="checkbox" id="d4"><span class="body"><span class="title"><span class="step-no">4</span>读 <code>codegen-gate.ts</code></span><span class="why">把它当作一个带验证器的 Agent 循环来分析。</span></span></label>
+      <label class="item"><input type="checkbox" id="d5"><span class="body"><span class="title"><span class="step-no">5</span>用另一个项目，或在 <code>packages/tools</code> 上扩展，补自主工具调用循环</span><span class="why">补上第三节里最关键的缺口。</span></span></label>
+    </div>
+  </section>
+
+  <footer>评测相关命令在 <code>apps/api</code> 目录下执行；评测会真实调用大模型并消耗 token。</footer>
+</main>
+
+<script>
+(function () {
+  var KEY = 'apploom-study-v1';
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.item input'));
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { saved = {}; }
+  function save() {
+    try {
+      var o = {};
+      boxes.forEach(function (b) { if (b.checked) o[b.id] = 1; });
+      localStorage.setItem(KEY, JSON.stringify(o));
+    } catch (e) {}
+  }
+  function render() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    document.getElementById('pcount').textContent = n + ' / ' + boxes.length;
+    document.getElementById('pbar').style.width = (boxes.length ? (n / boxes.length) * 100 : 0) + '%';
+  }
+  boxes.forEach(function (b) {
+    b.checked = !!saved[b.id];
+    b.addEventListener('change', function () { save(); render(); });
+  });
+  document.getElementById('reset').addEventListener('click', function () {
+    boxes.forEach(function (b) { b.checked = false; });
+    save(); render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

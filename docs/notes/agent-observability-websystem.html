@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>web_system Agent 可观测现状</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root {
+  --bg: #f6f8f9; --surface: #ffffff; --fg: #16232b; --muted: #5a6b75; --line: #d9e1e5;
+  --accent: #0b6e6e; --accent-soft: #dff1ef; --warn: #9a5b00; --warn-soft: #fbefd9; --bad: #a3322b; --bad-soft: #fbe6e3; --code-bg: #eaf0f2;
+  --font-body: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f181d; --surface: #16232a; --fg: #e3ecef; --muted: #93a6af; --line: #28393f;
+    --accent: #55c2bb; --accent-soft: #15343a; --warn: #e8b35e; --warn-soft: #3a2d14; --bad: #f08a80; --bad-soft: #3d1f1c; --code-bg: #1d2e35;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.75;
+  padding-block: 32px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.35; margin: 0; }
+h1 { font-size: 28px; }
+h2 { font-size: 21px; padding-top: 8px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-family: var(--font-mono); }
+.lede { color: var(--muted); max-width: 68ch; }
+.muted { color: var(--muted); }
+section { display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; flex-direction: column; gap: 12px; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; vertical-align: top; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 500; }
+.callout { border-radius: 8px; padding: 14px 16px; background: var(--accent-soft); display: flex; flex-direction: column; gap: 6px; }
+.callout.warn { background: var(--warn-soft); }
+.callout.bad { background: var(--bad-soft); }
+ul, ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+li::marker { color: var(--accent); }
+.tag { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.tag.no { background: var(--bad-soft); color: var(--bad); }
+.tag.mid { background: var(--warn-soft); color: var(--warn); }
+.flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.flow .node { flex: 1 1 150px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 10px 12px; font-size: 13px; line-height: 1.55; }
+.flow .node b { display: block; font-size: 13px; margin-bottom: 2px; }
+.flow .arrow { align-self: center; color: var(--muted); }
+footer { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <span class="eyebrow">现状调研 · 2026-10-19</span>
+  <h1>web_system 的 Agent 可观测现状：做了什么，没做什么</h1>
+  <p class="lede">结论基于对 <code>agent-core</code>、<code>ai-service</code>、<code>ai-agent</code>、<code>gateway</code> 和 admin 前端代码的只读核对。没有连线上库，没有运行 admin 页面，所以「数据实际长什么样」没有验证。重点是区分「设计了」「代码里有」「真的接上了」三种状态。</p>
+</header>
+
+<section>
+  <h2>一、结论摘要</h2>
+  <div class="callout">
+    <ul>
+      <li><b>实际在用的可观测是「运行记录」模式：</b>每次 run 的完整步骤流写入 <code>agent_runs</code> 表，再按天聚合到 <code>run_metrics</code>，admin 里有运行列表、详情回放和观测台。</li>
+      <li><b>能回答的：</b>某个 Agent 的成功率、耗时、token、成本趋势；某次对话完整发生了什么；为什么路由到这个 Agent（<code>via</code> 归因）。</li>
+      <li><b>回答不了的：</b>工具级失败率与延迟、单次模型调用的耗时与 <code>finish_reason</code>、缓存命中、回答质量、跨服务链路追踪。</li>
+    </ul>
+  </div>
+  <div class="callout bad">
+    <b>最需要注意的一点</b>
+    <span><code>TelemetryPort</code>（对齐 OTel GenAI 的 llm、tool、run 事件）在引擎里设计并发出了事件，但<b>两个宿主服务构造引擎时都没有注入它</b>，所以这些事件目前没有任何消费方。面试里不能把它说成「已经在用的遥测」。</span>
+  </div>
+</section>
+
+<section>
+  <h2>二、数据是怎么流动的</h2>
+  <div class="flow">
+    <div class="node"><b>1. 引擎事件流</b>SSE 事件：<code>intent</code>、<code>tool_call</code>、<code>tool_result</code>、<code>final</code>、<code>error</code> 等</div>
+    <span class="arrow">→</span>
+    <div class="node"><b>2. 控制器收集</b>边推给前端，边把事件收集成 <code>steps</code></div>
+    <span class="arrow">→</span>
+    <div class="node"><b>3. 落库</b>ai-service 直接写；ai-agent 通过内部 HTTP 推送过去</div>
+    <span class="arrow">→</span>
+    <div class="node"><b>4. 两张表</b><code>agent_runs</code> 明细；<code>run_metrics</code> 日聚合</div>
+    <span class="arrow">→</span>
+    <div class="node"><b>5. admin</b>运行列表、详情回放、观测台</div>
+  </div>
+  <p class="muted">依据：<code>agent.controller.ts</code>（ai-service 与 ai-agent 各一个）、<code>agent-run-pusher.ts</code>、<code>agent-log.service.ts</code>。</p>
+</section>
+
+<section>
+  <h2>三、各层现状</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>层</th><th>内容</th><th>位置</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td>实时事件流</td><td>SSE 事件带 <code>intent</code>（含 <code>via</code>：explicit、locked、rule、llm、fallback）、<code>usage</code>、带错误码前缀的 <code>error</code>（如 <code>[MODEL_EMPTY]</code>）</td><td><code>runtime.interface.ts</code>、<code>agent-errors.ts</code></td><td><span class="tag">在用</span></td></tr>
+        <tr><td>单次 run 记录</td><td>用户输入原文、systemPrompt 快照、工具声明、模型、完整步骤流、最终回答、错误、状态、耗时、Agent 版本快照、token、成本</td><td><code>agent-run.entity.ts</code>，表 <code>agent_runs</code></td><td><span class="tag">在用</span></td></tr>
+        <tr><td>成本核算</td><td>按字典 <code>llm_models</code> 的单价乘以 usage 计算，没有单价记 0</td><td><code>agent-log.service.ts</code>、<code>dict-pricing.provider.ts</code></td><td><span class="tag">在用</span></td></tr>
+        <tr><td>日聚合指标</td><td>按 agentId、model、source、date 聚合：run 数、成功数、失败数、token、成本、总耗时</td><td><code>run-metrics.entity.ts</code></td><td><span class="tag">在用</span></td></tr>
+        <tr><td>admin 页面</td><td>对话调试（Playground）、运行列表（可按 agent、用户、状态、会话、关键字、时间过滤）、运行详情、观测台（run 数、成功率、平均耗时、成本、成功失败趋势、Agent 汇总）</td><td><code>apps/admin/src/views/Agents/</code></td><td><span class="tag">在用</span></td></tr>
+        <tr><td>调用级日志</td><td>每次模型调用打印 <code>finish</code>、<code>contentLen</code>、<code>toolCalls</code>、<code>usage</code>；意图分类降级和压缩失败有 warn 或 error 日志</td><td><code>tokenhub.client.ts</code>、<code>intent-classifier.ts</code>、<code>compaction.ts</code></td><td><span class="tag mid">只在日志里，不可聚合</span></td></tr>
+        <tr><td>网关访问日志</td><td>含 <code>traceId</code>、路径、用户、上游状态、耗时</td><td><code>gateway-access-log.entity.ts</code></td><td><span class="tag mid">仅网关层</span></td></tr>
+        <tr><td>遥测端口</td><td><code>onRunStart</code>、<code>onLlmSpan</code>、<code>onToolSpan</code>、<code>onSkillLoad</code>、<code>onRunEnd</code>，字段对齐 OTel GenAI；异常被引擎吞掉</td><td><code>telemetry.interface.ts</code>、<code>agent-engine.ts</code></td><td><span class="tag no">未接线</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">遥测端口未接线的依据：<code>AgentEngine</code> 构造函数的第 6 个参数是 <code>telemetry</code>；ai-service 传了 4 个参数，ai-agent 传了 5 个（第 5 个是 SkillLoader），kedou-agent CLI 传了 4 个；在 <code>servers/</code> 下搜索 <code>TelemetryPort</code> 没有任何实现。</p>
+</section>
+
+<section>
+  <h2>四、能回答和不能回答的问题</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>问题</th><th>能否回答</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>某 Agent 今天的成功率、耗时、成本</td><td><span class="tag">能</span></td><td>观测台，数据源 <code>run_metrics</code></td></tr>
+        <tr><td>某次对话完整发生了什么</td><td><span class="tag">能</span></td><td>运行详情里的完整步骤流，可回放</td></tr>
+        <tr><td>为什么这句话路由到了这个 Agent</td><td><span class="tag">能</span></td><td><code>intent</code> 事件里的 <code>via</code> 在步骤流里</td></tr>
+        <tr><td>跑的是哪个版本的 Agent 定义</td><td><span class="tag">能</span></td><td>run 记录里有版本快照和 systemPrompt 快照</td></tr>
+        <tr><td>「空输出」发生了多少次</td><td><span class="tag mid">勉强</span></td><td>错误码只在 <code>error</code> 文本的前缀里，没有结构化列，要靠文本匹配统计</td></tr>
+        <tr><td>兜底路由占比（<code>via=fallback</code>）</td><td><span class="tag mid">勉强</span></td><td>数据在步骤流 JSON 里，没有聚合，要写查询解析 JSON</td></tr>
+        <tr><td>哪个工具失败率最高、哪个最慢</td><td><span class="tag no">不能</span></td><td>没有工具级聚合；<code>onToolSpan</code> 没接线。步骤里的时间戳是控制器收到事件的时间，只能粗略推算</td></tr>
+        <tr><td>单次模型调用的耗时、<code>finish_reason</code> 分布</td><td><span class="tag no">不能</span></td><td>只打在日志里，没入库</td></tr>
+        <tr><td>缓存命中情况</td><td><span class="tag no">不能</span></td><td>客户端不读 <code>cached_tokens</code>，成本也没有缓存折扣</td></tr>
+        <tr><td>回答质量、有没有答对</td><td><span class="tag no">不能</span></td><td><code>agent_runs</code> 没有 outcome、fail_stage 字段，在 ai-service 与 ai-agent 源码里搜索无命中</td></tr>
+        <tr><td>一个请求从网关到 Agent 再到工具的完整链路</td><td><span class="tag no">不能</span></td><td>网关有 <code>traceId</code>，但在 ai-agent、ai-service 源码里没搜到它被透传或使用</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>五、发现的问题与风险</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>#</th><th>问题</th><th>依据</th><th>影响</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>遥测端口没有接线</td><td>见第三节</td><td>llm、tool 级的指标全部缺失，设计和实际脱节</td></tr>
+        <tr><td>2</td><td><b>ai-service 本地路径的 run 记录可能没有 token 和成本</b></td><td>ai-service 控制器收集步骤时只复制 <code>type</code>、<code>name</code>、<code>content</code>、<code>step</code>、<code>ts</code>，没有复制 <code>usage</code>；而成本核算是从步骤里的 <code>usage</code> 提取的。ai-agent 的控制器复制了 <code>usage</code></td><td>study-assistant、变变等本地 Agent 的观测台可能显示 token 为空、成本为 0。这是按代码推断，<b>没有查库验证</b></td></tr>
+        <tr><td>3</td><td>错误码没有结构化</td><td>错误码拼在 <code>error</code> 文本前缀</td><td>无法直接按错误类型聚合</td></tr>
+        <tr><td>4</td><td>没有质量归因字段</td><td><code>outcome</code>、<code>fail_stage</code> 无命中；内容中心的质量枚举注释提到「与 agent_runs 的 outcome / fail_stage 方法论同构」，但 agent_runs 本身没有</td><td>只能知道「跑通没」，不知道「对不对」</td></tr>
+        <tr><td>5</td><td>每次 run 复制 systemPrompt 全文和用户输入原文</td><td><code>agent-run.entity.ts</code></td><td>存储增长快；用户输入含个人信息，需要保留期与脱敏策略。我没有看到清理策略</td></tr>
+        <tr><td>6</td><td>写入失败静默</td><td>两处都是只打 warn 或 error 日志、不抛错</td><td>推送失败时运行记录直接丢失，没有告警或补偿，指标会偏低</td></tr>
+        <tr><td>7</td><td>成本口径不完整</td><td>没有单价记 0 而不是「未知」；不含缓存折扣</td><td>成本可能被低估，且无法区分「免费」和「没定价」</td></tr>
+        <tr><td>8</td><td>ai-service 记录了全部事件，包括每个内容增量</td><td>ai-service 控制器对所有事件一律收集（包括 <code>content_delta</code>、<code>reasoning_delta</code>），而 ai-agent 的控制器把这两类过滤掉了</td><td>步骤 JSON 可能很大。按代码推断，未查库</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>六、改进路线</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>优先级</th><th>做什么</th><th>价值</th><th>预估</th></tr></thead>
+      <tbody>
+        <tr><td>P0</td><td>确认并修复 ai-service 路径的 usage 丢失（先查库确认，再改控制器）</td><td>成本和 token 指标恢复准确</td><td>半天</td></tr>
+        <tr><td>P0</td><td>给内部写入接口加共享密钥校验</td><td>消除伪造记录风险</td><td>半天</td></tr>
+        <tr><td>P1</td><td>实现一个 <code>TelemetryPort</code> 适配器并注入引擎：记录 llm 调用耗时、<code>finish_reason</code>、<code>cachedTokens</code>，工具耗时与成败</td><td>补上工具级与调用级指标；与缓存方案的 P0 合并</td><td>1 至 2 天</td></tr>
+        <tr><td>P1</td><td>给 <code>agent_runs</code> 增加结构化列：<code>error_code</code>、<code>route_via</code>、<code>finish_reason</code>、<code>tool_error_count</code></td><td>空输出率、兜底率可直接聚合</td><td>1 天</td></tr>
+        <tr><td>P2</td><td>增加 <code>outcome</code>、<code>fail_stage</code> 与离线评测回写</td><td>从「跑通」走向「答对」</td><td>视评测集而定</td></tr>
+        <tr><td>P2</td><td>透传 <code>traceId</code>：网关 → ai-agent → 工具 → MCP</td><td>跨服务排障</td><td>2 至 3 天</td></tr>
+        <tr><td>P2</td><td>run 记录的保留期、脱敏与写入失败告警</td><td>合规与可信度</td><td>1 天</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">预估工时是我按改动范围的粗略判断，不是承诺。涉及业务仓库改动，我会先给方案，不会直接改。</p>
+</section>
+
+<section>
+  <h2>七、面试怎么讲才准确</h2>
+  <div class="callout warn">
+    <ul>
+      <li><b>可以讲：</b>运行记录加日聚合加 admin 回放；错误码把技术报错与用户提示分开；意图路由的 <code>via</code> 归因；Agent 版本与 systemPrompt 快照让回放可复现；成本从字典单价核算。</li>
+      <li><b>要讲清楚的边界：</b>我设计了对齐 OTel GenAI 的遥测端口，但目前宿主没有注入，llm 与工具级指标还没采集。这是已知缺口，也是下一步。</li>
+      <li><b>不要说：</b>已经有全链路追踪、用了 OTel、有质量评分回写。这三项代码里都没有。</li>
+      <li><b>手册里需要核对的一句：</b>术语映射第 7 条写的「telemetry 端口 + via 归因字段」。<code>via</code> 是真实在用的，telemetry 端口是设计了但未接线，被追问时按这个口径答。</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>八、未核实事项</h2>
+  <ul>
+    <li>没有连线上库，不知道 <code>agent_runs</code> 里实际的数据质量，尤其是第五节第 2、8 条是按代码推断的。</li>
+    <li>没有运行 admin 页面，观测台和运行详情的实际展示没有亲眼看过。</li>
+    <li>没有读完 <code>hy3.client.ts</code>，不确定它是否记录同样的调用级日志。</li>
+    <li><code>servers/ai-agent/e2e/contract-risk/run-eval.ts</code> 是一个离线评测脚本，我没有读，不确定它是否回写 run 记录。</li>
+    <li>traceId 没有透传这一结论，只是在 ai-agent、ai-service 源码里没搜到相关用法，不排除通过别的字段或中间件传递。</li>
+  </ul>
+</section>
+
+<footer>相关文档：<code>docs/notes/agent-cache-plan.html</code>（缓存方案，与第六节 P1 合并实施）、<code>docs/notes/agent-case-bank.html</code>（Case 库）。</footer>
+
+</main>
+</body>
+</html>

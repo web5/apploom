@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 缓存接入方案</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root {
+  --bg: #f6f8f9; --surface: #ffffff; --fg: #16232b; --muted: #5a6b75; --line: #d9e1e5;
+  --accent: #0b6e6e; --accent-soft: #dff1ef; --warn: #9a5b00; --warn-soft: #fbefd9; --code-bg: #eaf0f2;
+  --font-body: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f181d; --surface: #16232a; --fg: #e3ecef; --muted: #93a6af; --line: #28393f;
+    --accent: #55c2bb; --accent-soft: #15343a; --warn: #e8b35e; --warn-soft: #3a2d14; --code-bg: #1d2e35;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.75;
+  padding-block: 32px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.35; margin: 0; }
+h1 { font-size: 28px; }
+h2 { font-size: 21px; padding-top: 8px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { margin: 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.65; background: var(--code-bg); border-radius: 8px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: normal; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-family: var(--font-mono); }
+.lede { color: var(--muted); max-width: 66ch; }
+.muted { color: var(--muted); }
+section { display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; flex-direction: column; gap: 12px; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 600px; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; vertical-align: top; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 500; }
+.callout { border-radius: 8px; padding: 14px 16px; background: var(--accent-soft); display: flex; flex-direction: column; gap: 6px; }
+.callout.warn { background: var(--warn-soft); }
+ul, ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+li::marker { color: var(--accent); }
+.tag { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.tag.no { background: var(--warn-soft); color: var(--warn); }
+footer { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <span class="eyebrow">方案 · 2026-10-19</span>
+  <h1>web_system 的 Agent 缓存接入方案</h1>
+  <p class="lede">目标是提升 Agent 的性能和稳定性。先说清一个前提：缓存主要省时间和成本，对准确率只有间接帮助，设计不好反而会降低准确率。本文给出分层方案、准入规则、实现位置和验证方式，并标出我实测过和没有验证的部分。这是设计文档，没有改动任何业务代码。</p>
+</header>
+
+<section>
+  <h2>一、结论摘要</h2>
+  <div class="callout">
+    <ul>
+      <li><b>可以做，建议分五层逐步上，第一步只做 L0：</b>记录网关返回的 <code>cached_tokens</code> 并稳定提示词前缀，半天完成，没有行为风险。</li>
+      <li><b>网关已经支持提示词前缀缓存</b>（我实测，见第二节），但现有代码没有读这个字段，所以目前看不到命中情况。</li>
+      <li><b>缓存与准确率：</b>能提升一致性；但缓存过期数据、失败结果、相近但不同的问题，会直接降低准确率。所以要有准入规则，且工具缓存默认关闭、逐个显式开启。</li>
+      <li><b>是否值得做 L1 以后各层，取决于真实流量的重复率，目前没有数据。</b>先打点再决定。</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>二、现状与实测</h2>
+
+  <h3>代码现状（只读核对）</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>项</th><th>现状</th><th>位置</th></tr></thead>
+      <tbody>
+        <tr><td>已有缓存</td><td>只有配置类缓存：技能 60 秒、字典 60 秒、变变配置 30 秒，均为进程内 Map</td><td><code>agent-skill-provider.ts</code>、<code>dict-client.service.ts</code>、<code>bianbian.service.ts</code></td></tr>
+        <tr><td>LLM、工具结果、意图分类缓存</td><td>没有</td><td>在 agent-core、ai-agent、ai-service、knowledge-service 里搜索 cache 相关代码</td></tr>
+        <tr><td>Redis 依赖</td><td>ai-agent、ai-service、knowledge-service 的 <code>package.json</code> 里没有</td><td>各服务 <code>package.json</code></td></tr>
+        <tr><td>usage 解析</td><td>只读 <code>prompt_tokens</code> 与 <code>completion_tokens</code>，不读缓存命中字段</td><td><code>tokenhub.client.ts</code> 约第 147–164 行</td></tr>
+        <tr><td>提示词拼装顺序</td><td>系统提示词（含技能目录）→ 历史摘要 → 历史消息 → 用户级画像 → 本轮用户消息</td><td><code>agent-engine.ts</code> 约第 100–145 行</td></tr>
+        <tr><td>工具契约</td><td>接口里没有只读、幂等、可缓存的声明</td><td><code>tool.interface.ts</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>网关前缀缓存实测</h3>
+  <p>对 TokenHub 的 <code>deepseek-v4-flash</code> 连续发 3 次请求，系统提示词相同（约 7060 token），只有最后一句用户问题不同：</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>次数</th><th>prompt_tokens</th><th>cached_tokens</th><th>命中比例</th><th>耗时</th></tr></thead>
+      <tbody>
+        <tr><td>第 1 次</td><td>7060</td><td>0</td><td>0%</td><td>2.09 秒</td></tr>
+        <tr><td>第 2 次</td><td>7060</td><td>6912</td><td>约 98%</td><td>3.71 秒</td></tr>
+        <tr><td>第 3 次</td><td>7060</td><td>6144</td><td>约 87%</td><td>3.82 秒</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><b>已确认：</b>网关支持提示词前缀缓存，并在响应的 <code>prompt_tokens_details.cached_tokens</code> 里返回命中数。</li>
+    <li><b>没有得出的结论：</b>延迟收益。样本只有 3 次，且 <code>max_tokens=8</code> 时推理 token 占满预算（<code>finish_reason=length</code>），耗时被推理干扰。</li>
+    <li><b>没有核实：</b>缓存 token 是否按更低价格计费；其他模型是否也返回这个字段。</li>
+    <li>顺带复现了你们之前的空输出问题：小预算加推理模型会把输出预算耗尽。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>三、分层方案</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>层</th><th>缓存什么</th><th>缓存键</th><th>收益</th><th>风险</th></tr></thead>
+      <tbody>
+        <tr><td>L0 提示词前缀</td><td>不自建缓存，利用网关的前缀缓存</td><td>前缀字节完全一致</td><td>省输入 token 成本，可能降首包延迟</td><td>几乎没有。历史摘要变化后前缀会断</td></tr>
+        <tr><td>L1 意图分类</td><td>分类结果（目标助手加置信度）</td><td>规范化 query、候选助手集合版本、提示词版本、模型 id</td><td>路由一致，省一次 LLM 调用</td><td>命中率未知；候选集合变化要失效</td></tr>
+        <tr><td>L2 只读工具结果</td><td>工具调用返回</td><td>工具名、规范化参数、用户或租户范围、数据版本</td><td>省工具耗时，减少重复调用</td><td>过期读、串用户，见第四节</td></tr>
+        <tr><td>L3 检索与向量</td><td>查询向量、分块向量、召回结果</td><td>文本内容哈希加 embedding 模型名</td><td>省 embedding 成本和时间</td><td>低；语料变了哈希自然变化</td></tr>
+        <tr><td>L4 语义缓存</td><td>相似问题的最终答案</td><td>问题向量加相似度阈值加用户范围</td><td>FAQ 类助手收益大</td><td><b>最高</b>：相似不等于相同</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>L0：具体怎么做</h3>
+  <ol>
+    <li>在 <code>tokenhub.client.ts</code> 解析 <code>prompt_tokens_details.cached_tokens</code>，放进 usage。</li>
+    <li>在遥测的 <code>onLlmSpan</code> 事件里增加 <code>cachedTokens</code>，后台可以统计命中比例。</li>
+    <li>检查各 Agent 的提示词前缀是否稳定：系统提示词里有没有时间、随机数、用户名；技能目录和工具 schema 的顺序是否确定。</li>
+    <li>把变化频繁的内容尽量放到最后。当前引擎的顺序里，历史摘要在压缩后会变化，之后的前缀就失效，这是预期内的代价。</li>
+  </ol>
+  <p class="muted">我在搜索范围内没有发现日期注入，但没有读完 ai-agent 全部提示词拼装代码，不排除别处有动态内容。</p>
+
+  <h3>L1：意图分类缓存</h3>
+  <ul>
+    <li>只缓存 <code>via</code> 为 <code>llm</code> 的结果。规则命中的本来就是零 LLM 开销，不需要缓存。</li>
+    <li>置信度低于阈值走兜底的结果不缓存，避免把「没把握」固化。</li>
+    <li>TTL 建议从几分钟起步，候选助手集合或分类提示词变更时按版本号失效。</li>
+    <li>上线前先用日志统计「重复 query 占比」，占比很低就不做。</li>
+  </ul>
+
+  <h3>L2：工具结果缓存</h3>
+  <p>在工具契约里增加声明，默认不缓存：</p>
+<pre><code>// 设计草图，尚未实现
+interface ToolCachePolicy {
+  /** 默认 false。只有显式声明才缓存 */
+  enabled: boolean;
+  ttlMs: number;
+  /** 参与缓存键的参数字段；其余参数变化不影响命中 */
+  keyFields: string[];
+  /** user：按用户隔离；tenant：按租户；global：仅限无用户数据的公共结果 */
+  scope: 'user' | 'tenant' | 'global';
+  /** 数据版本来源。变化时整体失效，例如部署后的版本号 */
+  versionOf?: string;
+}</code></pre>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>工具类别</th><th>是否缓存</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>read-file</code>、<code>grep-search</code>、<code>list-dir</code></td><td>可以，短 TTL</td><td>键里带文件修改时间或内容哈希更稳妥</td></tr>
+        <tr><td><code>list_modules</code></td><td>可以，较长 TTL</td><td>模块列表变化很少</td></tr>
+        <tr><td><code>get_current_versions</code>、<code>list_releases</code></td><td><b>不建议，或绑定发布事件失效</b></td><td>部署 Agent 的门禁要求版本号必须来自工具返回，过期值会让 Agent 基于旧版本做判断</td></tr>
+        <tr><td><code>get_job_status</code></td><td><b>绝不缓存</b></td><td>轮询要拿最新状态，缓存会让轮询永远不到终态</td></tr>
+        <tr><td><code>publish_pipeline</code>、<code>publish_version</code>、<code>rollback</code>、<code>promote_release</code>、<code>cancel_job</code></td><td><b>绝不缓存</b></td><td>有副作用的操作</td></tr>
+        <tr><td>web 搜索</td><td>可以，短 TTL</td><td>时效性内容 TTL 要更短</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">工具清单取自部署助手的工具列表与 agent-core 的 coding 工具；各工具是否真有副作用，实施前要逐个确认。</p>
+</section>
+
+<section>
+  <h2>四、缓存与准确率的关系</h2>
+
+  <h3>能间接提升的</h3>
+  <ul>
+    <li>相同输入得到相同的路由或检索结果，减少随机波动。</li>
+    <li>把已验证的结果固定下来，避免「今天对明天错」。</li>
+  </ul>
+
+  <h3>会降低准确率的，也是设计的重点</h3>
+  <div class="callout warn">
+    <ul>
+      <li><b>缓存过期数据。</b>例如缓存了 <code>get_current_versions</code>，发布完成后 Agent 仍告诉用户旧版本。</li>
+      <li><b>缓存了失败结果。</b>你们遇到的空输出问题：如果把 <code>finish=length</code> 且内容为空的响应缓存下来，故障会被钉死。</li>
+      <li><b>语义缓存误命中。</b>「发布到 dev」和「发布到 prod」语义相近，错误命中的后果严重。</li>
+      <li><b>串用户数据。</b>缓存键没带用户或租户，会把一个人的结果给另一个人。</li>
+      <li><b>缓存污染。</b>提示词注入让模型产出恶意内容，被缓存后影响后续请求。</li>
+    </ul>
+  </div>
+
+  <h3>准入规则（写进缓存层，而不是靠自觉）</h3>
+  <ol>
+    <li>LLM 结果：只缓存 <code>finish_reason=stop</code>、内容非空、通过 schema 校验的响应。</li>
+    <li>工具结果：只缓存成功且未被截断的结果；失败、超时、部分结果一律不缓存。</li>
+    <li>缓存键必须包含范围字段（用户或租户），默认按用户隔离。</li>
+    <li>工具缓存默认关闭，由工具作者显式声明 TTL 和键字段。</li>
+    <li>带副作用的工具在代码层面禁止开启缓存，而不是文档约定。</li>
+    <li>每次命中都要在遥测里记录来源，便于排查「这个答案是不是缓存的」。</li>
+  </ol>
+</section>
+
+<section>
+  <h2>五、实现位置与结构</h2>
+  <p>沿用你们已有的端口与适配器风格（遥测端口、记忆端口），在 agent-core 里新增 <code>CachePort</code>，用装饰器接入，不改引擎主流程。</p>
+<pre><code>// 设计草图，尚未实现
+interface CachePort {
+  get(key: string): Promise&lt;CacheEntry | undefined&gt;;
+  set(key: string, value: unknown, opts: { ttlMs: number; tags?: string[] }): Promise&lt;void&gt;;
+  /** 按标签批量失效，例如发布完成后失效某模块的版本类缓存 */
+  invalidateByTag(tag: string): Promise&lt;void&gt;;
+}
+
+// 同一个键并发请求时只发起一次真实调用（singleflight），其余等待结果
+class CachedTool implements Tool { /* 包装目标工具，按 ToolCachePolicy 工作 */ }
+class CachedIntentClassifier { /* 包装分类调用，按 L1 规则工作 */ }</code></pre>
+  <ul>
+    <li><b>存储：</b>先用进程内存实现；多实例需要共享时再换 Redis，当前服务没有 Redis 依赖，引入前要评估运维成本。</li>
+    <li><b>失效：</b>以 TTL 为底线，叠加按事件失效，例如部署成功后失效对应模块的版本类缓存。</li>
+    <li><b>并发：</b>需要 singleflight，避免缓存未命中时多个相同请求同时打到下游。</li>
+    <li><b>可观测：</b>命中率、命中节省的 token 与耗时、过期读事件，都进遥测。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>六、验证方式</h2>
+  <ol>
+    <li><b>先打点再决策：</b>L0 上线后看一周的前缀命中率；用日志统计 L1 的重复 query 占比。</li>
+    <li><b>用评测防回退：</b>
+      <ul>
+        <li>部署轨迹评测（llm-bench 的 <code>src/traj</code>）：开关缓存前后，6 条门禁的违规率不能上升。</li>
+        <li><b>新增过期读场景：</b>发布完成后再问当前版本，缓存开启时 Agent 不能报出旧版本。这个场景要先写、先让它在有缺陷的缓存上变红，再修。</li>
+        <li>RAG 评测：开启检索缓存前后，命中率与拒答表现不能变。</li>
+      </ul>
+    </li>
+    <li><b>灰度：</b>工具缓存逐个工具开启，监控过期读和用户投诉。</li>
+    <li><b>语义缓存：</b>只有在评测里证明误命中率足够低，才对 FAQ 类助手开启，带工具的助手不做。</li>
+  </ol>
+</section>
+
+<section>
+  <h2>七、分阶段计划</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>阶段</th><th>内容</th><th>预估</th><th>验收</th></tr></thead>
+      <tbody>
+        <tr><td>P0</td><td>解析并记录 <code>cached_tokens</code>；检查前缀稳定性</td><td>半天</td><td>后台能看到各 Agent 的前缀命中比例</td></tr>
+        <tr><td>P1</td><td>统计重复 query；如占比可观，做 L1 意图分类缓存</td><td>1 至 2 天</td><td>评测路由准确率不降；命中率达到预期</td></tr>
+        <tr><td>P2</td><td>工具契约增加缓存声明；先给 <code>list_modules</code>、<code>read-file</code> 开启</td><td>2 至 3 天</td><td>过期读场景通过；轨迹评测违规率不升</td></tr>
+        <tr><td>P3</td><td>检索与向量缓存</td><td>1 天</td><td>RAG 评测指标不变，embedding 请求量下降</td></tr>
+        <tr><td>P4</td><td>语义缓存，仅 FAQ 类助手</td><td>视评测结果而定</td><td>误命中率经评测证明可接受</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">预估工时是我按改动范围的粗略判断，不是承诺。</p>
+</section>
+
+<section>
+  <h2>八、未核实事项</h2>
+  <ul>
+    <li>没有查看真实流量，不知道重复提问率，所以 L1、L4 的收益未知。</li>
+    <li>前缀缓存只测了 <code>deepseek-v4-flash</code> 一个模型；缓存 token 的计费折扣没有核实。</li>
+    <li>延迟收益没有测出结论，样本太小。</li>
+    <li>没有读完 ai-agent 的全部提示词拼装代码。</li>
+    <li>各工具是否有副作用、是否真的只读，需要实施前逐个确认；工具清单来自部署助手与 agent-core 的列表。</li>
+    <li>CachePort 与 ToolCachePolicy 是设计草图，没有编译或运行过。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>九、面试可讲的点</h2>
+  <ul>
+    <li>缓存不是越多越好：我先实测了网关是否暴露命中信息，再设计分层，而不是直接上语义缓存。</li>
+    <li>缓存与准确率的取舍：准入规则、默认关闭、副作用工具代码层禁止，对应的是你们 <code>get_job_status</code> 与版本真实门禁。</li>
+    <li>空输出问题和缓存的关联：不缓存失败结果，否则会钉死故障。</li>
+    <li>诚实口径：这是设计与实测，还没有落地；落地前先打点。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>十、问题相同，但业务数据会变：怎么缓存</h2>
+  <p>核心原则：问题相同不等于输入相同。缓存键要由真正决定答案的全部输入生成，其中包括业务数据本身。这样数据一变，缓存自动未命中，新鲜度由构造保证，而不是靠失效逻辑不出错。</p>
+
+  <h3>主方案：数据实时取，缓存「基于数据生成答案」这一步</h3>
+  <ol>
+    <li><b>决策步骤（调用哪个工具）：</b>可缓存。键为规范化问题、工具 schema 版本、提示词版本、模型 id。</li>
+    <li><b>取数步骤（工具执行）：</b>实时执行，不缓存。读取数据通常又快又便宜。</li>
+    <li><b>生成步骤（基于工具结果写回答）：</b>可缓存。键为完整消息的哈希，其中已包含刚取到的数据。数据不变则命中，数据变了哈希变化，自动未命中。</li>
+  </ol>
+  <p>省下的是最贵的 LLM 调用，数据始终是新的。多步 Agent 循环里每一步的输入都包含前面所有工具结果，所以任何一步的数据变化都会让后续各步自动失效。</p>
+
+  <h3>五种策略与适用数据</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>数据特点</th><th>做法</th><th>可能的例子</th><th>主要代价</th></tr></thead>
+      <tbody>
+        <tr><td>变化快、出错代价高</td><td>只缓存「怎么查」，答案不缓存</td><td>作业状态、当前线上版本</td><td>仍要调用 LLM 生成回答，节省有限</td></tr>
+        <tr><td>有可靠的版本号或更新时间</td><td>版本号放进缓存键，数据更新自动失效；必要时按事件批量失效</td><td>知识库索引版本、每日采集批次号</td><td>要有可靠的版本来源，否则退化为猜测</td></tr>
+        <tr><td>能接受短暂滞后</td><td>短 TTL，过期后先返回旧值并后台刷新（stale-while-revalidate），回答里标注「数据截至某时间」</td><td>统计看板类问答</td><td>用户可能看到略旧的数字，必须标注</td></tr>
+        <tr><td>叙述固定、数字要新</td><td>让模型输出带占位符的结构，事实在渲染时填入，缓存的只是叙述</td><td>报告、摘要类</td><td>要改输出格式，占位符校验要严格</td></tr>
+        <tr><td>想用缓存但要先确认数据没变</td><td>缓存里存证据指纹，命中后先重跑一次便宜的读取，指纹一致才返回（类似 HTTP 条件请求）</td><td>读取比生成便宜很多的场景</td><td>仍有一次读取开销</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>部署 Agent 的示例</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>用户问题</th><th>怎么处理</th></tr></thead>
+      <tbody>
+        <tr><td>admin 在 dev 当前是什么版本</td><td><code>get_current_versions</code> 每次实时调用；「基于该结果的回答」按完整消息哈希缓存。版本变化则哈希变化，自动未命中</td></tr>
+        <tr><td>刚才提交的发布作业到哪一步了</td><td><code>get_job_status</code> 绝不缓存，回答也不缓存（状态每次都在变）</td></tr>
+        <tr><td>把 admin 发布到 dev</td><td>「调用 <code>publish_pipeline</code>」这一步不能回放，每次都要重新确认；只能缓存前面的「列模块」等只读步骤</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>必须守住的规则</h3>
+  <div class="callout warn">
+    <ul>
+      <li><b>不缓存带副作用的决策。</b>输出里包含对写工具的调用时，这一步整体不进缓存。</li>
+      <li><b>缓存键必须带用户或租户范围。</b>同一句话，不同用户看到的数据不同。</li>
+      <li><b>含时间敏感词的问题不缓存。</b>例如「今天」「刚刚」「最新」「现在」。回答里若含相对时间，也不应缓存。</li>
+      <li><b>工具结果里的时间戳、请求 id 会让哈希永远不同。</b>只能剔除已确认不影响答案的字段，剔除过多又会造成误命中，需要逐个工具评估。</li>
+      <li><b>参与缓存的调用温度设为 0。</b>否则缓存只是钉住了一次随机采样。</li>
+      <li><b>失败、空输出、截断的响应不缓存</b>（见第四节准入规则）。</li>
+    </ul>
+  </div>
+
+  <h3>验证</h3>
+  <ol>
+    <li>在轨迹评测里增加「数据变更后再问」场景：先问一次，修改 mock 后端里的版本，再问一次，回答必须反映新版本。现有 mock 后端已有版本与作业状态机，可以扩展。</li>
+    <li>统计过期读事件：命中缓存但回答与实时数据不一致的次数，目标为零。</li>
+    <li>对比开关缓存前后，门禁违规率和回答准确率都不能下降，再看节省了多少 LLM 调用和 token。</li>
+  </ol>
+  <p class="muted">未核实：内容中心、知识库等服务是否有可靠的版本号或更新时间，我没有读它们的代码。版本号做缓存键的方案，只在这个前提成立时适用。</p>
+</section>
+
+<footer>相关文档：<code>docs/notes/agent-case-bank.html</code>（Case 库）、<code>docs/notes/jev-evaluation-plan.html</code>。llm-bench 中的 <code>docs/traj-lab.md</code> 是过期读场景的评测基础。</footer>
+
+</main>
+</body>
+</html>

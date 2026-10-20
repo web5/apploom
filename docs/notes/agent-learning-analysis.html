@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 学习路径分析</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root {
+  --bg: #f6f8f9; --surface: #ffffff; --fg: #16232b; --muted: #5a6b75; --line: #d9e1e5;
+  --accent: #0b6e6e; --accent-soft: #dff1ef; --warn: #9a5b00; --warn-soft: #fbefd9; --code-bg: #eaf0f2;
+  --font-body: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f181d; --surface: #16232a; --fg: #e3ecef; --muted: #93a6af; --line: #28393f;
+    --accent: #55c2bb; --accent-soft: #15343a; --warn: #e8b35e; --warn-soft: #3a2d14; --code-bg: #1d2e35;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.75;
+  padding-block: 32px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.35; margin: 0; }
+h1 { font-size: 28px; }
+h2 { font-size: 21px; padding-top: 8px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-family: var(--font-mono); }
+.lede { color: var(--muted); max-width: 66ch; }
+section { display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; flex-direction: column; gap: 12px; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; vertical-align: top; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 500; }
+.callout { border-radius: 8px; padding: 14px 16px; background: var(--accent-soft); display: flex; flex-direction: column; gap: 6px; }
+.callout.warn { background: var(--warn-soft); }
+ul, ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+li::marker { color: var(--accent); }
+.muted { color: var(--muted); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.cols > div { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tag { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.tag.no { background: var(--warn-soft); color: var(--warn); }
+footer { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <span class="eyebrow">分析文档 · 2026-10-19</span>
+  <h1>Agent 学习路径分析：AppLoom、llm-bench、web_system 三个工程对比</h1>
+  <p class="lede">目标：作为高级工程师（T11 视角）系统掌握 AI Agent 开发。本文评估三个工程各自能教什么、缺什么，并结合 web_system 中真实踩过的问题，给出「从故障出发」的学习方案；后半部分补充 llm-bench 的题目选择分析，以及备考手册的事实核对。所有结论只基于读代码和文档，没有运行任何工程，也没有读线上日志。</p>
+</header>
+
+<section>
+  <h2>一、结论摘要</h2>
+  <div class="callout">
+    <ul>
+      <li><b>web_system 是最适合学 Agent 核心机制的工程。</b>它有真实的 ReAct 引擎、MCP 接入、带硬门禁的部署 Agent、记忆压缩、错误码体系和一份自己写的 T11 思维导图。</li>
+      <li><b>AppLoom 教「编排与工程化」，llm-bench 教「度量与选型」，各有侧重，但两者都没有自主工具调用循环。</b></li>
+      <li><b>你的视野缺口不在「没做过」，而在「没沉淀」。</b>真实故障（如翻译 Agent 空输出）的根因已写在代码注释里，却没变成回归用例和自动处置（判空与错误码已有）；T11 导图的评测与落地部分还停在方案阶段。</li>
+      <li><b>建议学法：把真实故障变成可复现用例</b>，每个概念由一次失败引出，再挂回你自己的导图节点。</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>二、三个工程的定位对比</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>工程</th><th>本质</th><th>适合学</th><th>学不到</th></tr></thead>
+      <tbody>
+        <tr><td>AppLoom</td><td>固定 5 阶段的 LLM 流水线 harness（需求 → 原型 → 架构 → 代码生成 → 部署）</td><td>结构化输出与失败分类、DAG 编排、产物指纹与级联失效、token 预算、沙箱、Eval 驱动开发</td><td>自主工具调用循环、记忆、多 Agent、MCP</td></tr>
+        <tr><td>llm-bench</td><td>约 1200 行 TS 的选型评测 harness，外加 RAG 实验台</td><td>评测方法论、模型 API 工程化、成本与延迟度量、RAG 检索侧评测</td><td>工具调用、Agent 循环、多轮上下文、流式（<code>src</code> 内未搜到 <code>tool_calls</code>）</td></tr>
+        <tr><td>web_system</td><td>真实业务系统，含 Agent 引擎、MCP 网关、部署控制台、小程序等</td><td>ReAct 循环、工具注册表、MCP、记忆压缩、错误码、telemetry、部署 Agent 的行为门禁</td><td>系统化的评测落地与轨迹级可观测性（见第五节）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>三、llm-bench 评估</h2>
+  <p>README 声明它是「大模型 / 智能体选型测评 harness」：固定题目、多次运行取均值与标准差、统计成本和延迟，判分分 rule 与 LLM-as-judge，并强制 judge 与被测模型不同厂商。</p>
+  <h3>对照 Agent 开发知识图谱的覆盖度</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>知识域</th><th>覆盖</th><th>依据</th></tr></thead>
+      <tbody>
+        <tr><td>评测方法论</td><td><span class="tag">强</span></td><td>rule 优先于 judge、稳定性独立成维度、性价比、语料快照防漂移</td></tr>
+        <tr><td>模型 API 层</td><td><span class="tag">有</span></td><td><code>client.ts</code> 100 行，失败不抛异常而写入返回值，成本按 usage 核算</td></tr>
+        <tr><td>RAG</td><td><span class="tag">一半</span></td><td>分块、TF-IDF/BM25/RRF、R@k 与 MRR 已有；缺稠密向量、rerank、生成层、拒答</td></tr>
+        <tr><td>工具调用 / Agent 循环</td><td><span class="tag no">无</span></td><td><code>client.ts</code> 固定单条 user 消息；<code>Task.kind</code> 已声明但从未使用</td></tr>
+        <tr><td>上下文工程、多轮</td><td><span class="tag no">无</span></td><td>设计文档把它列为 D 组「需 harness 扩展」，覆盖 5/19 个维度</td></tr>
+        <tr><td>沙箱、权限、多 Agent、MCP</td><td><span class="tag no">无</span></td><td>仅有手工场景文档，评的是别人的产品</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>如果要用它学习，怎么开始</h3>
+  <ol>
+    <li>跑零成本命令 <code>--list-models</code>、<code>--dry-run</code>，看配置加载和判分方式（约 10 分钟）。</li>
+    <li>读 <code>client.ts</code> 与 <code>scoring.ts</code>（约 1 小时）。</li>
+    <li>跑一次便宜评测 <code>--group cn_tokenhub --only Q3 -n 3</code>，约 ¥0.1，Q3 是纯机器判分题。</li>
+    <li>复盘一份旧报告。例如 <code>results/report-20261016-112846.md</code> 里 th-hy3 的 Q1 得分为 0，但那次 n=1。原因我没有查证，可作为排查练习。</li>
+    <li>做 RAG 实验台（约半天）。</li>
+  </ol>
+  <p class="muted">小提示：README 写「6 题」，<code>config/tasks.yaml</code> 实际已有 Q1 至 Q8，文档略滞后。</p>
+</section>
+
+<section>
+  <h2>四、web_system 中已有的资产</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>资产</th><th>位置</th><th>价值</th></tr></thead>
+      <tbody>
+        <tr><td>ReAct 引擎</td><td><code>packages/agent-core/src/core/agent-engine.ts</code></td><td><code>maxSteps</code> 熔断、流式 content/reasoning 事件、usage 累计、<code>onLlmSpan</code> 埋点</td></tr>
+        <tr><td>错误码体系</td><td><code>core/agent-errors.ts</code></td><td>技术原文与用户提示分离，服务端归类、客户端查表</td></tr>
+        <tr><td>模型客户端</td><td><code>clients/tokenhub.client.ts</code>、<code>hy3.client.ts</code></td><td>日志含 <code>finish</code>、<code>contentLen</code>、<code>toolCalls</code>、<code>usage</code>，排查「正文为空」的现成观测点</td></tr>
+        <tr><td>记忆压缩</td><td><code>memory/compaction.ts</code></td><td>增量摘要，<code>compactionThreshold</code> 与 <code>keepRecent</code> 可配置</td></tr>
+        <tr><td>意图分类</td><td><code>core/intent-classifier.ts</code></td><td>注释记录了 thinking 吃光输出预算的教训</td></tr>
+        <tr><td>MCP</td><td><code>packages/mcp-core</code>、<code>servers/mcp-gateway</code>、<code>agent-core/src/mcp/mcp-tool.adapter.ts</code></td><td>真实的工具协议接入</td></tr>
+        <tr><td>部署 Agent</td><td><code>packages/kedou-agent/src/cli/agents/deploy-assistant.agent.ts</code></td><td>系统提示里写死「prod 二次确认、必须轮询到终态、不编造版本」</td></tr>
+        <tr><td>部署 MCP 行为守则</td><td><code>mcp-skills/kedou-deploy/SKILL.md</code></td><td>6 条不可协商门禁，天然可转为评测断言</td></tr>
+        <tr><td>T11 思维导图</td><td><code>docs/architecture/agent-dev-t11-mindmap.md</code></td><td>承重层 / 可换层 / 易变层 / 业务透镜四层，每节点拆「价值、原理、方案」</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>五、两个真实问题的分析</h2>
+  <div class="cols">
+    <div>
+      <h3>翻译 Agent 偶发空输出</h3>
+      <p><b>已知根因（来自代码注释）：</b>思考型模型把输出预算花在 reasoning 上，返回 <code>finish_reason=length</code> 且 <code>content=''</code>；流式下网关会忽略 <code>reasoning_effort</code>，推理 token 挤满预算。</p>
+      <p><b>证据位置：</b><code>intent-classifier.ts</code> 第 69–74、205–221 行；<code>tokenhub.client.ts</code> 第 32–36、185–192 行。</p>
+      <p><b>缺口：</b>引擎已有判空：<code>agent-engine.ts</code> 约第 234 行在「无内容且无工具调用」时报 <code>MODEL_EMPTY</code>，所以失败分类是有的。缺的是后续处置（我在已读部分没看到针对 <code>finish=length</code> 的自动重试或降级）和固化的回归用例。</p>
+    </div>
+    <div>
+      <h3>部署 Agent（MCP）问题</h3>
+      <p><b>现象：</b>问题是在 WorkBuddy 智能体里暴露的，不是你们自己的 Agent，所以没有对应日志。</p>
+      <p><b>本质：</b>你没法观测第三方 Agent 如何使用你的 MCP。服务端只有审计日志（调用者作为 <code>operator</code> 写入），看不到它的决策过程。</p>
+      <p><b>洞察：</b>MCP 工具描述就是 prompt 的一部分（导图 §2.2）。同一套 MCP 在不同客户端 Agent 里表现不同，服务端必须对「不听话的 Agent」鲁棒。提交 <code>31af9e91</code>（工具声明与后端路由对齐，修静默忽略与声明不落库）就是同类问题。</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>六、学习方案：把真实故障变成可复现用例</h2>
+  <p>原则：不从概念开始，从一次失败开始，每个机制都是被某次故障逼出来的。</p>
+
+  <h3>用例 1：翻译空输出（成本最低，建议先做）</h3>
+  <ol>
+    <li>在独立临时目录里 import <code>agent-core</code> 复现：小 <code>maxTokens</code> 加开启 thinking，稳定得到 <code>finish=length</code> 且 <code>content=''</code>。</li>
+    <li>加护栏：空内容检测与错误码引擎已有，补上针对 <code>finish=length</code> 的有限次重试（关闭 thinking 或加大预算）和 span 记录。</li>
+    <li>固化成测试，再放进 eval 集，之后每次改模型或 prompt 都跑。</li>
+  </ol>
+  <p class="muted">学到：reasoning 预算、<code>finish_reason</code> 语义、失败分类、重试边界、回归集的由来。只需要已有的模型密钥，不涉及部署风险。</p>
+
+  <h3>用例 2：部署 MCP 的轨迹评测</h3>
+  <ol>
+    <li>用 <code>kedou-agent</code> CLI 的 deploy 助手，对接 mock MCP 或 <code>local</code> 环境（SKILL 说明 local 不污染远程 dev），完整记录每轮工具调用。</li>
+    <li>把 SKILL.md 的 6 条门禁写成规则检查，例如：prod 发布前是否有用户确认；提交后是否轮询到终态；版本号是否来自工具返回而非编造。</li>
+    <li>换几个模型各跑 n 次，统计违规率。</li>
+  </ol>
+  <p class="muted">学到：MCP 工具契约、轨迹级评测、人工审批门、同一 Agent 在不同模型下的方差。这也补上 llm-bench 设计文档里 D3「工具调用与验证闭环」的空白。</p>
+
+  <div class="callout warn">
+    <b>安全边界</b>
+    <span>这是你们的业务仓库。复现在独立临时目录进行，不改仓库代码；要往仓库落测试或护栏，先征得你同意。部署用例只对 mock 或 local，不碰 dev、staging、prod。</span>
+  </div>
+</section>
+
+<section>
+  <h2>七、与你的 T11 导图对应</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>用例</th><th>对应导图节点</th></tr></thead>
+      <tbody>
+        <tr><td>翻译空输出</td><td>§3.3 调参（thinking 与 maxTokens）、§1.5 质量与评测、§4.2 风险</td></tr>
+        <tr><td>部署轨迹评测</td><td>§1.4 安全边界、§2.2 工具契约、§1.5 质量与评测、§2.4 评测体系</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>做完这两个用例，导图里目前<b>没有</b>的两个节点会自然出现，建议补进去：</p>
+  <ul>
+    <li><b>可观测性：</b>LLM span 之外的完整轨迹追踪，包括对第三方客户端 Agent 的间接观测手段。</li>
+    <li><b>失败分类学：</b>空输出、截断、编造工具名、死循环、越权，每类的检测方式与处置策略。</li>
+  </ul>
+  <p>这两块是资深 Agent 工程师与只会搭 demo 的人差距最大的地方。</p>
+</section>
+
+<section>
+  <h2>八、llm-bench 的题目选择与原因</h2>
+  <p>依据：<code>config/tasks.yaml</code>（Q1 至 Q8）、<code>specs/benchmark-dimensions/task-sources.md</code>、<code>design.md</code>，并核对了 <code>src/index.ts</code> 的判分分支。</p>
+
+  <h3>当前实际在跑的 8 道题</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>题</th><th>考什么</th><th>判分</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>Q1 TypeORM 精度 bug</td><td>多假设下定位根因，指出环境差异（本地 MySQL 8.4 与线上 5.7）</td><td>judge，5 个评分点</td><td>真实踩坑，与面试手册 C2 是同一件事</td></tr>
+        <tr><td>Q2 日均 QPS</td><td>对不可能知道的事不编造</td><td>rule，3 个禁用短语</td><td>构造题</td></tr>
+        <tr><td>Q3 package.json 转 JSON</td><td>结构化输出、指令遵循、数数</td><td>纯 rule，5 项</td><td>真实文件，答案可算：devDependencies 2 个，scripts 10 个</td></tr>
+        <tr><td>Q4 UserDTO 改类型</td><td>影响面分析，区分编译期报错与运行时静默失效</td><td>judge，5 点</td><td>真实微服务拓扑</td></tr>
+        <tr><td>Q5 Cocos 与 Unity 热更新</td><td>不熟悉领域能否主动标注不确定</td><td>judge，3 点</td><td>刻意选你们不会的领域，防过拟合</td></tr>
+        <tr><td>Q6 追问自评把握</td><td>自评可信度</td><td>judge</td><td>当前跑不了（见下）</td></tr>
+        <tr><td>Q7 key 被删</td><td>不可逆性认知：答 <code>rotate</code>，不编造 key</td><td>纯 rule，6 项</td><td>真实凭据事故</td></tr>
+        <tr><td>Q8 轮换后验证</td><td>反向验证：旧 key 必须得到 401，只验新 key 不算验证</td><td>纯 rule，5 项</td><td>同一次事故的延伸</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>为什么选这些：yaml 头部的「出题五律」</h3>
+  <ol>
+    <li><b>有 ground truth。</b>全部来自自己踩过的坑，答案握在手里；自己也要猜的题不出。</li>
+    <li><b>答案不唯一但可判定。</b>允许措辞不同，但必须有客观分界，否则只剩印象分。</li>
+    <li><b>能机器判就不用 judge。</b>judge 既是成本也是偏差源。Q3、Q7、Q8 是这条的产物。</li>
+    <li><b>题目自带材料。</b>现象、报错、约束写进 prompt，别让模型猜环境，猜环境等于考运气。</li>
+    <li><b>能逼出「错得很自信」。</b>好题的标志是弱模型答得比强模型还像专家。Q7 的典型错误答案是格式正确但编造的 key；Q8 是只验正向就宣布通过。</li>
+  </ol>
+  <p>整体倾向：偏「诚实与校准」（Q2、Q5、Q6、Q7）和「静默失效」（Q4、Q8），而不是考谁写代码更强。原因是它服务于选型，生产里最危险的是模型自信地错。</p>
+
+  <h3>读下来发现的问题</h3>
+  <div class="callout warn">
+    <ul>
+      <li><b>Q6 实际跑不了。</b>它要在 Q1 之后追问，但 harness 每次调用都是新会话，题目的 <code>note</code> 自己也承认。</li>
+      <li><b>rubric 题没配 <code>--judge</code> 就不判分。</b><code>index.ts</code> 里 rule 优先，<code>rubric &amp;&amp; judge</code> 才走 judge，否则返回「无判分方式」。Q1、Q4、Q5 必须指定 judge，因此受 judge 模型影响。</li>
+      <li><b>Q2 的 rule 很弱。</b>只禁 3 个短语（「QPS 大约」「日均约」「约为」），回答「日均 QPS 为 120」就能绕过，编造了数字仍拿满分。</li>
+      <li><b>note 里写的「出局」没有被实现。</b>Q2、Q7 的 note 都写了答错即出局，但 <code>scoreByRule</code> 只是命中率乘以满分，没有一票否决。Q7 答 <code>fabricate</code> 加 <code>reconstructable: yes</code>，仍能拿 2 到 4 分（满分 6）。</li>
+      <li><b>README 滞后。</b>README 写 6 题，yaml 实际 8 题。</li>
+    </ul>
+  </div>
+
+  <h3>规划好但还没落地的题</h3>
+  <ul>
+    <li>A 类 21 题：根因与环境差异、并发时序、日志误读、静默失效、命令可运行性、方案评估。</li>
+    <li>B 类 4 题：抗谄媚、事实与推断分层、跨领域给出处。</li>
+    <li>外部基线：IFEval、GPQA、SimpleQA、MMLU-Pro，单独算分、不并入总分，避免稀释场景信号。</li>
+    <li>L2 场景题：多轮、fixture 注入、命令验证，需先扩展 harness。</li>
+    <li>明确不接 SWE-bench、Terminal-Bench、GAIA 等，因为它们评的是 Agent，而当前 harness 单轮无工具。</li>
+  </ul>
+  <p>优先级最高的「必写」是 B01、B02（<b>抗谄媚</b>，设计文档称「当前 0 覆盖且最影响信任」），然后是 A10、A13、A19。覆盖最缺的恰恰是最想要的那块，这部分还没做。</p>
+
+  <h3>可迁移的做法</h3>
+  <p>题目来源于真实故障，答案可机器判定，再刻意挑「错得很自信」的陷阱。可以拿翻译空输出试一次：题面给现象和约束，答案要求指出 <code>finish_reason=length</code> 与 reasoning 预算，判分写成 rule。既练出题，也练「把故障沉淀成用例」。</p>
+</section>
+
+<section>
+  <h2>九、备考手册的事实核对</h2>
+  <p>对象：一份「术语映射与逐字稿」形式的备考手册，并参考同目录的总索引与备考计划。核对依据是 web_system 与 llm-bench 的<b>当前</b>代码状态，不是文档。</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>手册说法</th><th>核对结果</th><th>建议</th></tr></thead>
+      <tbody>
+        <tr><td>空结果有独立错误码 <code>MODEL_EMPTY</code>；无内容且无工具调用算失败</td><td>属实，<code>agent-engine.ts</code> 约第 234 行</td><td>放心讲</td></tr>
+        <tr><td><code>IntentVia</code> 五级归因、遥测异常一律吞掉、写操作 <code>[y/N]</code> 且非交互默认拒绝、<code>CLASSIFY_MAX_TOKENS</code> 的教训</td><td>属实</td><td>放心讲</td></tr>
+        <tr><td>RAG：heading 0.819 对 fixed 0.667</td><td>属实，与 <code>rag-lab.md</code> 一致</td><td>放心讲</td></tr>
+        <tr><td>agent-core「三个生产服务」在用</td><td>不准：依赖它的是 <code>ai-service</code>、<code>ai-agent</code> 两个后端，第三个 <code>kedou-agent</code> 是 CLI 包</td><td>改说「两个后端服务加一个 CLI」</td></tr>
+        <tr><td>「13 条红线脚本挂在 PreToolUse hook 上」</td><td>混在一起了：<code>.codebuddy/settings.json</code> 的 PreToolUse 挂的是 UI 原型门禁与 worktree 门禁共 4 个脚本；红线规则在 <code>scan-rules.sh</code>，里面出现 14 个编号（R1–R5、R8–R16）。变更日志 v1.9 称 <code>scripts/redline/</code> 已删除，但该目录当前存在</td><td>先自己数清楚，把「hook 门禁」和「规则扫描」分开讲</td></tr>
+        <tr><td>StreamEvent「10 种事件」</td><td>实际 11 种（多了 <code>intent</code>、<code>card</code>）</td><td>改说「十来种」</td></tr>
+        <tr><td>「20 个 skill」</td><td><code>.codebuddy/skills</code> 下 21 项</td><td>改说「二十多个」</td></tr>
+        <tr><td>「延迟差 56 倍，TokenHub 有一次失败」</td><td>失败属实（一次只有 1 个分数）。两份报告算出来是约 16 倍和约 52 倍，没找到 56 的出处；n=2，报告自己标了标准差不可信</td><td>说「十几到五十倍，样本小」，别报 56</td></tr>
+        <tr><td>UC Berkeley「8 个基准全能被 reward hacking 到接近 100%」</td><td>研究存在（2026 年 4 月，RDI 团队）。被利用的是评分管线，不是模型变强，OSWorld 只到 73%。我只看到二手报道</td><td>改说「评分管线可被利用，多数接近满分」，引用前先看原文</td></tr>
+        <tr><td>路由「显式 &gt; 锁定 &gt; 规则 &gt; LLM &gt; 兜底」</td><td>基本对，但代码注释说锁定不能短路，话题切换时规则可以覆盖锁定</td><td>被追问「锁定」时按这个讲</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>这两天怎么用这份手册</h3>
+  <ol>
+    <li><b>改答案里的数字。</b>上表 5 处，约 20 分钟。被追问时数字对不上，比没有数字更伤。</li>
+    <li><b>开口练，不再读。</b>按你自己的计划录音回放，只判一条「有没有落到机制层」。优先 A1、A2、B3、B4、C2、D1。</li>
+    <li><b>面试前一天只看 P0 五篇。</b></li>
+    <li><b>三条红线再过一遍：</b>不说用过 Langfuse，不说做过轨迹级评测，不说 fallback 涨过 3% 到 15%。</li>
+  </ol>
+  <p class="muted">结论：缺的不是材料，是开口练和事实核对。你的索引文档自己也说「33 篇已经够，缺的是数据不是方法论」。</p>
+</section>
+
+<section>
+  <h2>十、未核实事项</h2>
+  <ul>
+    <li>没有运行三个工程中的任何一个，也没有读线上日志或 WorkBuddy 侧的会话记录。</li>
+    <li>导图 §1.5 的 <code>agent_runs.outcome</code>、golden 集、<code>scripts/agent-eval/</code> 是否已落地，没有核实，文档里只看到方案。</li>
+    <li>已核实：引擎对「无内容且无工具调用」会报 <code>MODEL_EMPTY</code>。未核实：是否有针对截断型空输出的自动重试。</li>
+    <li>llm-bench 里 th-hy3 Q1 得 0 分的原因，没有查。</li>
+    <li>手册中「56 倍」延迟的出处没有找到；Berkeley 研究只看了二手报道，没开原文。</li>
+    <li>红线「13 条」的准确数目没有逐条核实，只看到 <code>scan-rules.sh</code> 里出现 14 个编号。</li>
+    <li>没有核实手册里涉及个人经历的部分，这些只有你自己能确认。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>十一、建议的下一步</h2>
+  <ol>
+    <li>先做用例 1（翻译空输出复现），一小时内能看到现象。</li>
+    <li>再做用例 2，选 mock MCP 起步。</li>
+    <li>把两次产出回填到 T11 导图，补上「可观测性」与「失败分类学」两个节点。</li>
+  </ol>
+</section>
+
+<footer>相关文档：<code>docs/notes/apploom-agent-study-checklist.html</code>（AppLoom 学习清单与 Eval 驱动开发说明）。</footer>
+
+</main>
+</body>
+</html>
