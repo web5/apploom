@@ -77,6 +77,10 @@ open http://localhost:3000/studio   # 生产端
 open http://localhost:3000/admin/debug  # 提示词调试
 ```
 
+### 端口
+
+Studio `3000`、API `3001`、Redis `6379`、Postgres `5432`；平台生成的产物站点从 **18000** 起由平台自动分配（`DEPLOY_BASE_PORT` 可改）。完整划分与选型理由见 [docs/ports.md](docs/ports.md)。
+
 ## 调试提示词
 
 改 `packages/shared/src/prompts/*.ts` 后重跑：

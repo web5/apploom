@@ -28,7 +28,7 @@ import { createServer } from 'node:net';
 import { createDefaultRegistry, type Approver } from '@apploom/tools';
 import { ApprovalService } from '../approval/approval.service';
 import { assessRunCommand, isOwnDeployProcess } from '../approval/policy';
-import { sandboxContext } from '../sandbox/sandbox';
+import { infraPorts, sandboxContext } from '../sandbox/sandbox';
 
 export type DeployStatus = 'success' | 'failed';
 
@@ -109,13 +109,18 @@ async function inspectProcess(pid: string): Promise<{ name: string; cwd: string 
   return { name, cwd: cwdLine?.slice(1) ?? '' };
 }
 
-/** 部署端口的起点：生成的系统统一从这里起分配（DEPLOY_BASE_PORT，默认 7000） */
+/** 部署端口的起点：生成的系统统一从这里起分配（DEPLOY_BASE_PORT，默认 18000） */
 export function deployBasePort(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.DEPLOY_BASE_PORT);
-  return Number.isInteger(n) && n >= 1024 && n <= 65000 ? n : 7000;
+  return Number.isInteger(n) && n >= 1024 && n <= 65000 ? n : 18000;
 }
 
 const PORT_SCAN = 200;
+
+/** 平台自己的端口：Studio（3000）、API、Redis、数据库等。即使有人把 DEPLOY_BASE_PORT 配得很低，预览也不会分到这些端口 */
+export function reservedPorts(env: NodeJS.ProcessEnv = process.env): number[] {
+  return [...new Set([3000, 3001, ...infraPorts(env)])];
+}
 
 /** 区间内被监听的端口 → 监听进程 pid 列表（只看 LISTEN：连着该端口的浏览器等客户端不算占用者） */
 async function listeningPorts(from: number, to: number): Promise<Map<number, string[]>> {
@@ -144,9 +149,9 @@ function canBind(port: number): Promise<boolean> {
 /**
  * 为这条流水线分配预览端口：从 base 起找第一个空闲端口。
  * 只终止「同一条流水线」之前部署的 dev server（cwd 在 ROOT/{docId} 下，重新部署时让出并复用自己的端口）；
- * 其它进程（别的流水线的预览、系统服务如 macOS 的 AirPlay 占着 7000、开发者自己的服务）一律不碰、不审批，直接跳过用下一个端口。
+ * 其它进程（别的流水线的预览、系统服务如 macOS 的 AirPlay 占着 5000 / 7000、开发者自己的服务）一律不碰、不审批，直接跳过用下一个端口。
  */
-export async function allocatePort(docId: string, onLog: (line: string) => void, base = deployBasePort()): Promise<number | null> {
+export async function allocatePort(docId: string, onLog: (line: string) => void, base = deployBasePort(), reserved: number[] = reservedPorts()): Promise<number | null> {
   const to = base + PORT_SCAN - 1;
   const roots = [ROOT, await fs.realpath(ROOT).catch(() => ROOT)];
   const myRoots = roots.map((r) => path.join(r, docId));
@@ -169,6 +174,7 @@ export async function allocatePort(docId: string, onLog: (line: string) => void,
 
   const busy = await listeningPorts(base, to);
   for (let port = base; port <= to; port++) {
+    if (reserved.includes(port)) continue;
     if (busy.has(port)) {
       if (port === base) onLog(`[port] ${port} 已被其它进程占用，不终止，顺延`);
       continue;

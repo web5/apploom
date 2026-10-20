@@ -64,7 +64,7 @@ exports[`给模型的 JSON Schema 由 Zod 生成（Zod 是唯一事实源） Dep
       "type": "string",
     },
     "port": {
-      "description": "local 目标时统一填 7000；仅作占位，实际端口由后端从 7000 起分配（占用则顺延）并以 PORT 环境变量传给 dev server",
+      "description": "local 目标时统一填 18000；仅作占位，实际端口由后端从 18000 起分配（占用则顺延）并以 PORT 环境变量传给 dev server",
       "maximum": 65535,
       "minimum": 1024,
       "type": "integer",

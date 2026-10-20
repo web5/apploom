@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import * as path from 'node:path';
-import { allocatePort, deployBasePort } from './local-deploy.service';
+import { allocatePort, deployBasePort, reservedPorts } from './local-deploy.service';
 
 const ROOT = '/tmp/apploom-deploy';
 const rnd = Math.random().toString(36).slice(2, 8);
@@ -32,10 +32,17 @@ async function listenerIn(cwd: string, port: number): Promise<ChildProcess> {
 const alive = (p: ChildProcess) => { try { process.kill(p.pid!, 0); return true; } catch { return false; } };
 
 describe('deployBasePort', () => {
-  it('默认 7000；DEPLOY_BASE_PORT 可改；非法值回落到 7000', () => {
-    expect(deployBasePort({})).toBe(7000);
+  it('默认 18000；DEPLOY_BASE_PORT 可改；非法值回落到 18000', () => {
+    expect(deployBasePort({})).toBe(18000);
     expect(deployBasePort({ DEPLOY_BASE_PORT: '6100' })).toBe(6100);
-    for (const bad of ['abc', '80', '70000', '7000.5']) expect(deployBasePort({ DEPLOY_BASE_PORT: bad })).toBe(7000);
+    for (const bad of ['abc', '80', '70000', '18000.5']) expect(deployBasePort({ DEPLOY_BASE_PORT: bad })).toBe(18000);
+  });
+});
+
+describe('reservedPorts', () => {
+  it('包含 Studio / API / Redis / 数据库端口，并随环境变量变化', () => {
+    const r = reservedPorts({ PORT: '4100', REDIS_PORT: '6400', DATABASE_URL: 'postgresql://u@h:5439/d' } as NodeJS.ProcessEnv);
+    for (const p of [3000, 3001, 4100, 6400, 5439, 5432, 3306]) expect(r).toContain(p);
   });
 });
 
@@ -49,7 +56,12 @@ describe('allocatePort：平台统一从基准端口起分配', () => {
     expect(await allocatePort(docA, () => undefined, base)).toBe(base);
   });
 
-  it('基准端口被无关进程占着（如 macOS 的 AirPlay 占 7000）：不终止它、不要审批，顺延到下一个', async () => {
+  it('平台自己的端口即使空闲也不分配：基准落在保留端口上时直接顺延', async () => {
+    const base = await freeBase();
+    expect(await allocatePort(docA, () => undefined, base, [base, base + 1])).toBe(base + 2);
+  });
+
+  it('基准端口被无关进程占着（如 macOS 的 AirPlay 占 5000 / 7000）：不终止它、不要审批，顺延到下一个', async () => {
     const base = await freeBase();
     const stranger = await listenerIn('/tmp', base);
     procs.push(stranger);
