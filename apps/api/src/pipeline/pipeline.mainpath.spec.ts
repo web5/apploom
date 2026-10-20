@@ -103,7 +103,7 @@ describe.each([
     expect(llm.generateCodegen).toHaveBeenCalledWith(OUT.design, OUT.prototype, expect.any(Function), undefined, expect.any(Function));
     expect(gate.verify).toHaveBeenCalledWith('main', OUT.codegen, expect.any(Function));
     expect(llm.generateDeploy).toHaveBeenCalledWith(OUT.codegen, expect.any(Function), undefined, expect.any(Function));
-    expect(deploySvc.deploy).toHaveBeenCalledWith('main', OUT.codegen, expect.any(Function), 5173);
+    expect(deploySvc.deploy).toHaveBeenCalledWith('main', OUT.codegen, expect.any(Function));
   });
 
   it('每个阶段恰好一条成功的 Attempt', async () => {

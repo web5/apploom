@@ -42,7 +42,7 @@ describe('给模型的 JSON Schema 由 Zod 生成（Zod 是唯一事实源）', 
   });
 
   it('.describe() 的文字原样进入生成结果（模型看得到字段说明）', () => {
-    expect((DEPLOY_JSON_SCHEMA.properties as Record<string, { description: string }>).port.description).toContain('部署前会检查占用并 kill');
+    expect((DEPLOY_JSON_SCHEMA.properties as Record<string, { description: string }>).port.description).toContain('实际端口由后端从 7000 起分配');
     expect((PRD_JSON_SCHEMA.properties as Record<string, { description: string }>).overview.description).toBe('产品概述（定位、目标用户、核心价值）');
   });
 

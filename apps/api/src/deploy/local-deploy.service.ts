@@ -24,7 +24,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { promises as fs, existsSync } from 'node:fs';
 import * as path from 'node:path';
-import { createDefaultRegistry, type ApprovalDecision, type Approver } from '@apploom/tools';
+import { createServer } from 'node:net';
+import { createDefaultRegistry, type Approver } from '@apploom/tools';
 import { ApprovalService } from '../approval/approval.service';
 import { assessRunCommand, isOwnDeployProcess } from '../approval/policy';
 import { sandboxContext } from '../sandbox/sandbox';
@@ -108,50 +109,72 @@ async function inspectProcess(pid: string): Promise<{ name: string; cwd: string 
   return { name, cwd: cwdLine?.slice(1) ?? '' };
 }
 
-/**
- * 释放端口。占用者若是「同一条流水线」之前部署的 dev server（cwd 在 ROOT/{docId} 下）直接终止；
- * 是别的流水线（别的用户）的预览：不终止，保留它，交由 dev server 自己换端口（vite / next 默认会递增）；
- * 其它进程属于「杀别人的进程」，必须经人工审批（HITL）。返回 null = 可以继续，否则为失败原因。
- */
-export async function freePort(
-  port: number,
-  docId: string,
-  onLog: (line: string) => void,
-  askApproval: (summary: string) => Promise<ApprovalDecision>,
-): Promise<string | null> {
-  const pids = (await capture('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'])).trim().split('\n').filter(Boolean);
-  if (pids.length === 0) {
-    onLog(`[port] ${port} 空闲`);
-    return null;
-  }
+/** 部署端口的起点：生成的系统统一从这里起分配（DEPLOY_BASE_PORT，默认 7000） */
+export function deployBasePort(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.DEPLOY_BASE_PORT);
+  return Number.isInteger(n) && n >= 1024 && n <= 65000 ? n : 7000;
+}
 
-  // macOS 的 /tmp 是 /private/tmp 的软链，lsof 报告真实路径，两种前缀都要认
+const PORT_SCAN = 200;
+
+/** 区间内被监听的端口 → 监听进程 pid 列表（只看 LISTEN：连着该端口的浏览器等客户端不算占用者） */
+async function listeningPorts(from: number, to: number): Promise<Map<number, string[]>> {
+  const out = await capture('lsof', ['-nP', `-iTCP:${from}-${to}`, '-sTCP:LISTEN', '-Fpn']);
+  const map = new Map<number, string[]>();
+  let pid = '';
+  for (const line of out.split('\n')) {
+    if (line.startsWith('p')) pid = line.slice(1);
+    else if (line.startsWith('n') && pid) {
+      const port = Number(line.slice(line.lastIndexOf(':') + 1));
+      if (Number.isInteger(port)) map.set(port, [...new Set([...(map.get(port) ?? []), pid])]);
+    }
+  }
+  return map;
+}
+
+/** lsof 看不到其它用户的进程；再试着绑一下，绑不上就当被占 */
+function canBind(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once('error', () => resolve(false));
+    srv.listen(port, '0.0.0.0', () => srv.close(() => resolve(true)));
+  });
+}
+
+/**
+ * 为这条流水线分配预览端口：从 base 起找第一个空闲端口。
+ * 只终止「同一条流水线」之前部署的 dev server（cwd 在 ROOT/{docId} 下，重新部署时让出并复用自己的端口）；
+ * 其它进程（别的流水线的预览、系统服务如 macOS 的 AirPlay 占着 7000、开发者自己的服务）一律不碰、不审批，直接跳过用下一个端口。
+ */
+export async function allocatePort(docId: string, onLog: (line: string) => void, base = deployBasePort()): Promise<number | null> {
+  const to = base + PORT_SCAN - 1;
   const roots = [ROOT, await fs.realpath(ROOT).catch(() => ROOT)];
   const myRoots = roots.map((r) => path.join(r, docId));
-  for (const pid of pids) {
-    const info = await inspectProcess(pid);
-    if (isOwnDeployProcess(info.cwd, roots) && !isOwnDeployProcess(info.cwd, myRoots)) {
-      onLog(`[port] ${port} 被另一条流水线的预览占用（PID ${pid}），不终止，让 dev server 自行换端口`);
-      continue;
-    }
-    if (!isOwnDeployProcess(info.cwd, roots)) {
-      const summary = `终止占用端口 ${port} 的进程 PID ${pid}（${info.name}，cwd: ${info.cwd || '未知'}）——该进程不是 AppLoom 部署的 dev server`;
-      onLog(`[port] ${summary}，等待人工审批`);
-      const decision = await askApproval(summary);
-      if (decision !== 'allowed-once') {
-        const reason = decision === 'rejected' ? '已被拒绝' : '审批超时/不可用';
-        return `端口 ${port} 被非 AppLoom 进程 ${pid}（${info.name}）占用，终止操作${reason}，未部署`;
+
+  let killed = false;
+  for (const [port, pids] of await listeningPorts(base, to)) {
+    for (const pid of pids) {
+      const info = await inspectProcess(pid);
+      if (!isOwnDeployProcess(info.cwd, myRoots)) continue;
+      try {
+        process.kill(Number(pid), 'SIGKILL');
+        killed = true;
+        onLog(`[port] ✓ 已终止本流水线上一次部署的 dev server（PID ${pid}，端口 ${port}）`);
+      } catch (e) {
+        onLog(`[port] ✕ kill ${pid} 失败: ${(e as Error).message}`);
       }
     }
-    try {
-      process.kill(Number(pid), 'SIGKILL');
-      onLog(`[port] ✓ 已 kill ${pid}（${info.name}）`);
-    } catch (e) {
-      onLog(`[port] ✕ kill ${pid} 失败: ${(e as Error).message}`);
-    }
   }
-  // 等一小会让内核释放端口
-  await new Promise((r) => setTimeout(r, 500));
+  if (killed) await new Promise((r) => setTimeout(r, 500));
+
+  const busy = await listeningPorts(base, to);
+  for (let port = base; port <= to; port++) {
+    if (busy.has(port)) {
+      if (port === base) onLog(`[port] ${port} 已被其它进程占用，不终止，顺延`);
+      continue;
+    }
+    if (await canBind(port)) return port;
+  }
   return null;
 }
 
@@ -184,7 +207,6 @@ export class LocalDeployService {
       runCommand: string;
     },
     onProgress: (chunk: string) => void,
-    port?: number,
     ownerId?: string,
   ): Promise<DeployOutput> {
     const log: string[] = [];
@@ -238,19 +260,15 @@ export class LocalDeployService {
       if (decision !== 'allowed-once') return abort(`启动命令未获批准（${decision === 'rejected' ? '已拒绝' : '审批超时'}）: ${runCommand}`);
     }
 
-    // 启动前：若指定了期望端口，先检查占用；自己的旧 dev server 直接终止，其它进程需人工审批
-    if (port) {
-      const blocked = await freePort(port, docId, writeLog, (summary) =>
-        this.approvals.request({ docId, stage: 'deploy', tool: 'kill_port', summary, risk: 'high' }),
-      );
-      if (blocked) return abort(blocked);
-      step(`[port] 目标端口 ${port} 已就绪`);
-    }
+    // 端口由平台统一分配（从 DEPLOY_BASE_PORT 起第一个空闲的），通过 PORT 环境变量交给 dev server；不再采信模型自己填的端口
+    const port = await allocatePort(docId, writeLog);
+    if (!port) return abort(`没有可用端口（从 ${deployBasePort()} 起的 ${PORT_SCAN} 个端口都被占用）`);
+    step(`[port] 分配端口 ${port}`);
     step(`[dev] 启动 ${codegen.runCommand}（解析 URL 等待 30s）`);
     // 若 runCommand 含 shell 操作符（&& | ; 等），按空格拆会把这些字符当成参数。
     // 含元字符时改用 shell 执行（组合命令只能靠 shell 解析）；纯命令保持 shell:false 安全拆分。
     // dev server 跑的是 LLM 生成的代码：只给最小环境，并套上 OS 级沙箱（见 sandbox/）
-    const sbx = sandboxContext(root, { BROWSER: 'none', CI: '0' }, process.env, ownerId);
+    const sbx = sandboxContext(root, { BROWSER: 'none', CI: '0', PORT: String(port) }, process.env, ownerId);
     // 容器里的端口默认不对宿主开放，预览起不来；与其启动一个访问不到的「成功部署」，不如明确失败（install / 门禁在容器里照常可用）
     if (sbx.executor.startsWith('container')) return abort('容器沙箱（SANDBOX_MODE=container）暂不支持 dev server 预览（需要端口发布 + 反向代理）；依赖安装与代码门禁不受影响');
     const hasShellMeta = /[&|;<>]/.test(runCommand);

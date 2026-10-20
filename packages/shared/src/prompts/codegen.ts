@@ -36,6 +36,7 @@ export const CODEGEN_SYSTEM_PROMPT = `# 角色
 - 每个 file 的 content 必须是完整可用的文件内容，不要省略 import 语句
 - 使用 Vite + TypeScript 时，必须生成 src/vite-env.d.ts（内容为 /// <reference types="vite/client" />），否则导入 *.module.css 或图片等资源会在类型检查中报 TS2307
 - Prisma schema 的 generator / datasource / model / enum 块必须多行书写：左花括号后换行，每个属性或字段独占一行（单行写法 prisma 直接报错）
+- **监听端口统一：dev server / 服务必须读取环境变量 PORT，缺省 7000**（平台部署时会分配实际端口并设置 PORT，不要写死 5173 / 3000 等框架默认端口）。Vite：server 配置 { host: true, port: Number(process.env.PORT) || 7000 }；Next.js：scripts 里写 "dev": "next dev -p 7000" 无法随平台变化，应写 "dev": "next dev"（Next 会自动读取 PORT）；Express / NestJS：listen(process.env.PORT || 7000)
 - 文件路径用正斜杠 / 分隔（跨平台兼容）
 - pageTree 中的核心页面生成组件，次要页面可合并到 notes 说明
 - dataModels 合并到一个 types.ts 或 schema 文件中

@@ -18,7 +18,7 @@ export const DeploySchema = z.object({
   /** 部署状态 */
   status: z.enum(['success', 'failed']).describe('部署状态'),
   /** 期望启动的本地端口（local 目标时，部署前会检查占用并 kill） */
-  port: z.number().int().min(1024).max(65535).optional().describe('期望启动的本地端口（local 目标时，如 vite 5173 / next 3000；部署前会检查占用并 kill）'),
+  port: z.number().int().min(1024).max(65535).optional().describe('local 目标时统一填 7000；仅作占位，实际端口由后端从 7000 起分配（占用则顺延）并以 PORT 环境变量传给 dev server'),
 });
 
 export type DeployDocument = z.infer<typeof DeploySchema>;

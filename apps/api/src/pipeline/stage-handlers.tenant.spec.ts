@@ -26,12 +26,12 @@ describe('阶段处理器把流水线归属作为租户传给沙箱', () => {
     await owned.run(owned.ctx('codegen'));
     await owned.run(owned.ctx('deploy'));
     expect(owned.deps.gate.verify).toHaveBeenCalledWith('d1', codegen, expect.any(Function), 'alice');
-    expect(owned.deps.deploy.deploy).toHaveBeenCalledWith('d1', codegen, expect.any(Function), 5173, 'alice');
+    expect(owned.deps.deploy.deploy).toHaveBeenCalledWith('d1', codegen, expect.any(Function), 'alice');
 
     const anon = setup();
     await anon.run(anon.ctx('codegen'));
     await anon.run(anon.ctx('deploy'));
     expect(anon.deps.gate.verify).toHaveBeenCalledWith('d1', codegen, expect.any(Function));
-    expect(anon.deps.deploy.deploy).toHaveBeenCalledWith('d1', codegen, expect.any(Function), 5173);
+    expect(anon.deps.deploy.deploy).toHaveBeenCalledWith('d1', codegen, expect.any(Function));
   });
 });

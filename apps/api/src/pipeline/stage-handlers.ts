@@ -167,7 +167,7 @@ const deployStage: Handler = async (deps, ctx) => {
     };
   }
 
-  const out = await deps.deploy.deploy(ctx.docId, codegen, ctx.onToken, deploy.port, ...tenantArg);
+  const out = await deps.deploy.deploy(ctx.docId, codegen, ctx.onToken, ...tenantArg);
   // 用真实结果覆盖 LLM 的占位值：port 取 dev server 实际监听的端口（反向代理按它转发）；配了预览域名时 url 换成代理地址
   const realPort = out.url ? portOfLocalUrl(out.url) : null;
   const preview = previewConfig();
