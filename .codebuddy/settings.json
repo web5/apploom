@@ -1,0 +1,31 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "write_to_file|replace_in_file|Write|Edit|MultiEdit|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CODEBUDDY_PROJECT_DIR:-.}/scripts/redline/hook-process-gate.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CODEBUDDY_PROJECT_DIR:-.}/scripts/redline/hook-ui-prototype-gate.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "run_command|Bash|exec_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CODEBUDDY_PROJECT_DIR:-.}/scripts/redline/hook-process-gate.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
