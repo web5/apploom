@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$PWD/scripts/redline/hook-process-gate.py\"",
+            "timeout": 10,
+            "statusMessage": "流程门禁检查中"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$PWD/scripts/redline/hook-ui-prototype-gate.py\"",
+            "timeout": 10,
+            "statusMessage": "原型门禁检查中"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|exec_command|exec",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$PWD/scripts/redline/hook-process-gate.py\"",
+            "timeout": 10,
+            "statusMessage": "流程门禁检查中"
+          }
+        ]
+      }
+    ]
+  }
+}
